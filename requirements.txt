@@ -1,0 +1,29 @@
+mcp
+mcp[server]
+langchain
+langgraph
+pydantic
+python-dotenv
+fastapi
+httpx
+uvicorn[standard]
+slowapi
+pypdf
+pymongo
+pytest
+pytest-asyncio
+pyngrok
+PyJWT 
+google-adk
+pandas
+matplotlib
+numpy
+sklearn
+anthropic #using claude for this.
+redis
+sqlalchemy 
+fastapi-mail
+# ---------------security----------
+pyOTP
+two-fast-auth
+qrcode
