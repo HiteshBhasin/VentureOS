@@ -1,0 +1,1 @@
+# Vector embeddings (Pinecone/Weaviate)
