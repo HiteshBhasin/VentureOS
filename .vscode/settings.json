@@ -1,0 +1,38 @@
+{
+  // GitHub Copilot Settings
+  "github.copilot.enable": {
+    "*": true,
+    "python": true,
+    "javascript": true,
+    "typescript": true,
+    "markdown": true,
+    "plaintext": true,
+    "yaml": true,
+    "json": true
+  },
+
+  // Enable inline suggestions (CRITICAL for Copilot)
+  "editor.inlineSuggest.enabled": true,
+
+  // Quick suggestions
+  "editor.quickSuggestions": {
+    "other": "on",
+    "comments": "off",
+    "strings": "off"
+  },
+
+  // Tab completion
+  "editor.tabCompletion": "on",
+
+  // Suggestion settings
+  "editor.suggestOnTriggerCharacters": true,
+  "editor.acceptSuggestionOnEnter": "on",
+  "editor.snippetSuggestions": "top",
+
+  // Python specific
+  "python.languageServer": "Pylance",
+
+  // Editor settings for better experience
+  "editor.formatOnSave": true,
+  "editor.wordWrap": "on"
+}
