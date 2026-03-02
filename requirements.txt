@@ -18,11 +18,14 @@ google-adk
 pandas
 matplotlib
 numpy
-sklearn
+scikit-learn
 anthropic #using claude for this.
 redis
 sqlalchemy 
 fastapi-mail
+openai
+python-dotenv
+tiktoken
 # ---------------security----------
 pyOTP
 two-fast-auth

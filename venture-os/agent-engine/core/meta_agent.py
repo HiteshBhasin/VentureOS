@@ -1,28 +1,28 @@
 # Meta-Agent: orchestrates all agents
 class Meta_agent:
     def __init__(self) -> None:
-        """
-        
-        """
+        """ """
         pass
-    
-    def analyze_user_requirement(user_input:str):
+
+    def analyze_user_requirement(self, user_input: str):
         """_summary_
 
         Args:
             input (str): _description_
         """
         input_len = len(user_input)
-        first_half = user_input[:(input_len/2)]
-        second_half = user_input[:(input_len/2)]
-    
-    def decompose_goals():
+
+    def decompose_goals(self):
         pass
-    def create_task_graph():
+
+    def create_task_graph(self):
         pass
-    def spawn_base_agent():
+
+    def spawn_base_agent(self):
         pass
-    def supervise():
+
+    def supervise(self):
         pass
-    def refine_strategy():
+
+    def refine_strategy(self):
         pass
