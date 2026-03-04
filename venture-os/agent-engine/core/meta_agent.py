@@ -65,7 +65,6 @@ class Meta_agent:
         return task_graph
 
     def spawn_base_agent(self, task):
-        graph = self.create_task_graph(task)
         agent = self.create_agent(task)
         return agent
 
