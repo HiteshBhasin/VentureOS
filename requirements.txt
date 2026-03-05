@@ -3,6 +3,7 @@ mcp[server]
 langchain
 langgraph
 pydantic
+pydantic-settings
 python-dotenv
 fastapi
 httpx
@@ -24,7 +25,6 @@ redis
 sqlalchemy 
 fastapi-mail
 openai
-python-dotenv
 tiktoken
 # ---------------security----------
 pyOTP
