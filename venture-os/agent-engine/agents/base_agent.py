@@ -31,23 +31,26 @@ class BaseAgent(ABC):
 
     def start(self) -> None:
         """Start the agent and set status to running."""
-        pass
+        self.status = "running"
 
     def stop(self) -> None:
         """Stop the agent and cleanup resources."""
-        pass
+        self.status = "stopped"
 
     def pause(self) -> None:
         """Pause the agent execution."""
-        pass
+        if self.status == "running" or self.status == "error":
+            self.status = "paused"
 
     def resume(self) -> None:
         """Resume the agent from paused state."""
-        pass
+        if self.status == "paused":
+            self.status = "running"
 
     def reset(self) -> None:
         """Reset the agent to initial state, clearing context and history."""
-        pass
+        self.context.clear()
+        self.history.clear()
 
     # ==================== Core Execution ====================
 
@@ -79,44 +82,51 @@ class BaseAgent(ABC):
 
     def add_to_context(self, key: str, value: Any) -> None:
         """Add data to agent's context."""
-        pass
+        self.context[key] = value
 
     def get_from_context(self, key: str) -> Optional[Any]:
         """Retrieve data from agent's context."""
-        pass
+        return self.context.get(key)
 
     def clear_context(self) -> None:
         """Clear all context data."""
-        pass
+        self.context.clear()
 
     def add_to_history(self, entry: Dict[str, Any]) -> None:
         """Add an entry to execution history."""
-        pass
+        self.history.append(entry)
 
     def get_history(self) -> List[Dict[str, Any]]:
         """Get full execution history."""
-        pass
+        return self.history
 
     # ==================== Tool Management ====================
 
     def register_tool(self, tool) -> None:
         """Register a tool for the agent to use."""
-        pass
+        self.tools.append(tool)
 
     def get_available_tools(self) -> List:
         """Get list of available tools."""
-        pass
+        return self.tools
 
     # ==================== Status & Info ====================
 
     def get_status(self) -> str:
         """Get current agent status."""
-        pass
+        return self.status
 
     def set_status(self, status: str) -> None:
         """Set agent status with validation."""
-        pass
+        self.status = status
 
     def get_info(self) -> Dict[str, Any]:
         """Get agent information and metadata."""
-        pass
+        return {
+            "agent_id": self.agent_id,
+            "status": self.status,
+            "context": self.context,
+            "history": self.history,
+            "tools": self.tools,
+            "config": self.config,
+        }

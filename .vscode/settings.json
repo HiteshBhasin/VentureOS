@@ -34,5 +34,14 @@
 
   // Editor settings for better experience
   "editor.formatOnSave": true,
-  "editor.wordWrap": "on"
+  "editor.wordWrap": "on",
+  "python.testing.unittestArgs": [
+    "-v",
+    "-s",
+    "./venture-os",
+    "-p",
+    "*test.py"
+  ],
+  "python.testing.pytestEnabled": false,
+  "python.testing.unittestEnabled": true
 }

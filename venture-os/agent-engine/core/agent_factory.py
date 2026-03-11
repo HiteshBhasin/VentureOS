@@ -1,11 +1,37 @@
 # Agent Factory: Spawn and manage agents
 from typing import Any, Dict, List, Optional, Type
 import logging
+import uuid
+import time
 
 from ..agents.base_agent import BaseAgent
 
-
 logger = logging.getLogger(__name__)
+
+# Keywords used to auto-detect agent types from task content
+AGENT_TYPE_KEYWORDS = {
+    "coding": [
+        "code",
+        "implement",
+        "function",
+        "class",
+        "debug",
+        "fix",
+        "refactor",
+        "program",
+    ],
+    "research": [
+        "research",
+        "find",
+        "search",
+        "investigate",
+        "analyze",
+        "discover",
+        "learn",
+    ],
+    "review": ["review", "check", "validate", "audit", "inspect", "evaluate", "assess"],
+    "runtime": ["run", "execute", "deploy", "start", "launch", "test"],
+}
 
 
 class AgentFactory:
@@ -29,11 +55,12 @@ class AgentFactory:
             agent_type: String identifier for the agent type (e.g., "coding", "research").
             agent_class: The agent class to instantiate for this type.
         """
-        pass
+        self._agent_registry[agent_type] = agent_class
+        logger.info(f"Registered agent type: {agent_type}")
 
     def get_registered_types(self) -> List[str]:
         """Get list of all registered agent types."""
-        pass
+        return list(self._agent_registry.keys())
 
     # ==================== Agent Creation ====================
 
@@ -52,8 +79,44 @@ class AgentFactory:
 
         Returns:
             Instantiated agent ready for execution.
+
+        Raises:
+            ValueError: If agent type is not registered.
         """
-        pass
+        # Determine agent type if not provided
+        if not agent_type:
+            agent_type = self._determine_agent_type(task)
+
+        # Validate agent type is registered
+        if agent_type not in self._agent_registry:
+            available = self.get_registered_types()
+            raise ValueError(
+                f"Unknown agent type '{agent_type}'. Available types: {available}"
+            )
+
+        # Generate unique agent ID
+        agent_id = self._generate_agent_id(task)
+
+        # Get the agent class and instantiate
+        agent_class = self._agent_registry[agent_type]
+        tools = self._get_tools_for_agent(agent_type)
+
+        agent = agent_class(
+            agent_id=agent_id,
+            llm=self.llm,
+            memory=None,  # Will be injected
+            tools=tools,
+            config=config,
+        )
+
+        # Inject dependencies (memory, additional tools)
+        self._inject_dependencies(agent)
+
+        # Track the active agent
+        self._active_agents[agent_id] = agent
+        logger.info(f"Spawned {agent_type} agent with ID: {agent_id}")
+
+        return agent
 
     def spawn_multiple(
         self, tasks: List[Dict[str, Any]], config: Optional[Dict] = None
@@ -67,7 +130,12 @@ class AgentFactory:
         Returns:
             List of instantiated agents.
         """
-        pass
+        agents = []
+        for task in tasks:
+            agent_type = task.get("type")
+            agent = self.spawn_agent(task, agent_type=agent_type, config=config)
+            agents.append(agent)
+        return agents
 
     def _determine_agent_type(self, task: Dict[str, Any]) -> str:
         """Determine the appropriate agent type based on task content.
@@ -78,7 +146,32 @@ class AgentFactory:
         Returns:
             Agent type string.
         """
-        pass
+        # Check if task explicitly specifies type
+        if "type" in task:
+            return task["type"]
+
+        # Analyze task description for keywords
+        description = task.get("description", "").lower()
+        name = task.get("name", "").lower()
+        content = f"{description} {name}"
+
+        # Score each agent type based on keyword matches
+        scores: Dict[str, int] = {}
+        for agent_type, keywords in AGENT_TYPE_KEYWORDS.items():
+            if agent_type in self._agent_registry:
+                score = sum(1 for kw in keywords if kw in content)
+                if score > 0:
+                    scores[agent_type] = score
+
+        # Return the highest scoring type, or default to first registered
+        if scores:
+            return max(scores.keys(), key=lambda k: scores[k])
+
+        # Fallback to first registered type or 'coding' as default
+        registered = self.get_registered_types()
+        if registered:
+            return registered[0]
+        return "coding"
 
     def _generate_agent_id(self, task: Dict[str, Any]) -> str:
         """Generate a unique agent ID.
@@ -89,17 +182,22 @@ class AgentFactory:
         Returns:
             Unique agent identifier string.
         """
-        pass
+        task_name = task.get("name", "task")
+        # Sanitize task name for use in ID
+        safe_name = "".join(c if c.isalnum() else "_" for c in task_name[:20])
+        timestamp = int(time.time() * 1000)
+        unique_suffix = uuid.uuid4().hex[:8]
+        return f"agent_{safe_name}_{timestamp}_{unique_suffix}"
 
     # ==================== Active Agent Management ====================
 
     def get_agent(self, agent_id: str) -> Optional[BaseAgent]:
         """Retrieve an active agent by ID."""
-        pass
+        return self._active_agents.get(agent_id)
 
     def get_all_agents(self) -> Dict[str, BaseAgent]:
         """Get all active agents."""
-        pass
+        return self._active_agents.copy()
 
     def remove_agent(self, agent_id: str) -> bool:
         """Remove an agent from active tracking.
@@ -110,11 +208,19 @@ class AgentFactory:
         Returns:
             True if removed, False if not found.
         """
-        pass
+        if agent_id in self._active_agents:
+            agent = self._active_agents.pop(agent_id)
+            agent.stop()
+            logger.info(f"Removed agent: {agent_id}")
+            return True
+        return False
 
     def stop_all_agents(self) -> None:
         """Stop all active agents."""
-        pass
+        for agent_id, agent in self._active_agents.items():
+            agent.stop()
+            logger.info(f"Stopped agent: {agent_id}")
+        self._active_agents.clear()
 
     # ==================== Dependency Injection ====================
 
@@ -124,7 +230,12 @@ class AgentFactory:
         Args:
             agent: Agent instance to configure.
         """
-        pass
+        # Inject memory manager
+        if self.memory_manager:
+            agent.memory = self.memory_manager
+
+        # Additional tool injection could happen here
+        # Tools are already set during instantiation from _get_tools_for_agent
 
     def _get_tools_for_agent(self, agent_type: str) -> List:
         """Get appropriate tools for an agent type.
@@ -135,4 +246,15 @@ class AgentFactory:
         Returns:
             List of tool instances.
         """
-        pass
+        if not self.tool_registry:
+            return []
+
+        # Try to get agent-specific tools from registry
+        if hasattr(self.tool_registry, "get_tools_for_type"):
+            return self.tool_registry.get_tools_for_type(agent_type)
+
+        # Fallback: return all available tools
+        if hasattr(self.tool_registry, "get_all_tools"):
+            return self.tool_registry.get_all_tools()
+
+        return []

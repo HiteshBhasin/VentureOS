@@ -1,1 +1,49 @@
 # Python project configuration
+[project]
+name = "meta-agent-system"
+version = "0.1.0"
+description = "Autonomous AI meta-agent framework"
+authors = [{name="Hitesh Bhasin"}]
+dependencies = [
+    "mcp",
+    "mcp[server]",
+    "langchain",
+    "langgraph",
+    "pydantic",
+    "pydantic-settings",
+    "python-dotenv",
+    "fastapi",
+    "httpx",
+    "uvicorn[standard]",
+    "slowapi",
+    "pypdf",
+    "pymongo",
+    "pytest",
+    "pytest-asyncio",
+    "pyngrok",
+    "PyJWT",
+    "google-adk",
+    "pandas",
+    "matplotlib",
+    "numpy",
+    "scikit-learn",
+    "anthropic",
+    "redis",
+    "sqlalchemy",
+    "fastapi-mail",
+    "openai",
+    "tiktoken",
+    "pyotp",
+    "two-fast-auth",
+    "qrcode"
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.black]
+line-length = 88
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
