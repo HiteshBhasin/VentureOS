@@ -1,4 +1,7 @@
 # Meta-Agent: orchestrates all agents
+import json
+import logging
+from core.agent_factory import AgentFactory
 from .llm_class import LLM
 
 
@@ -29,9 +32,10 @@ class Meta_agent:
             keep all the attributes as is , as I will be using them to create task graph and spawn base agents. the primary goal is the main objective that the user wants to achieve. the domain is the specific area or industry related to the primary goal. constraints are any limitations or restrictions that need to be considered while achieving the primary goal. required capabilities are the skills, knowledge, or resources needed to accomplish the primary goal. complexity level indicates how difficult it is to achieve the primary goal, which can be categorized as low, medium, or high.
         """
         response = self.llm.invoke(prompt, system_prompt)
-        return response
+        parsed_response = json.loads(response) if response else {}
+        return parsed_response
 
-    def decompose_goals(self, response: str):
+    def decompose_goals(self, response: list):
         """_summary_
 
         Args:
@@ -41,15 +45,16 @@ class Meta_agent:
             _type_: _description_
         """
         tasks = []
-        for task in response.get("required_capabilities", []):
-            tasks.append(
-                {
-                    "task_name": task,
-                    "status": "pending",
-                    "assigned_agent": None,
-                    "dependencies": [],
-                }
-            )
+        if isinstance(response, list) and "required_capabilities" in response:
+            for task in response["required_capabilities"]:
+                tasks.append(
+                    {
+                        "task_name": task,
+                        "status": "pending",
+                        "assigned_agent": None,
+                        "dependencies": [],
+                    }
+                )
         return tasks
 
     def create_task_graph(self, tasks):
@@ -65,7 +70,16 @@ class Meta_agent:
         return task_graph
 
     def spawn_base_agent(self, task):
-        agent = self.create_agent(task)
+        """_summary_
+
+        Args:
+            task (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        agent_factory = AgentFactory(self.llm)
+        agent = agent_factory.spawn_agent(task)
         return agent
 
     def supervise(self, tasks):
@@ -111,3 +125,24 @@ class Meta_agent:
             if task["task_name"] not in visited:
                 dfs(task, visited, stack)
         return stack[::-1]
+
+    def depency_satified(self, task: list):
+        # check if all dependencies of the task are completed
+        for dep in task["dependencies"]:
+            if dep["status"] != "completed":
+                return False
+        return True
+
+    def check_agent_status(self, agent_id):
+        # check the status of the assigned agent
+        if agent_id:
+            # logic to check agent status
+            return "completed"  # or "failed"
+        return "pending"
+
+    def handle_failure(self, task):
+        # logic to handle task failure, such as retrying or reassigning the task
+        if task["status"] == "failed":
+            task["status"] = "pending"
+            task["assigned_agent"] = None
+            logging.info(f"Task {task['task_name']} failed. Retrying...")

@@ -76,7 +76,13 @@ class BaseAgent(ABC):
         Returns:
             LLM response string or None on failure.
         """
-        pass
+        try:
+            response = self.llm.invoke(prompt, system_prompt)
+            return response
+        except Exception as e:
+            logger.error(f"LLM invocation failed: {e}")
+            self.status = "error"
+            return None
 
     # ==================== Context & History ====================
 
