@@ -44,9 +44,124 @@ class Validator:
 
     # ==================== Task Validation ====================
 
+    # Valid values for task fields
+    VALID_STATUSES = {
+        "pending",
+        "ready",
+        "running",
+        "completed",
+        "failed",
+        "skipped",
+        "cancelled",
+    }
+    VALID_AGENT_TYPES = {"coding", "research", "review", "runtime"}
+    REQUIRED_TASK_FIELDS = {"id", "name", "status", "agent_type"}
+
     def validate_task(self, task: Dict[str, Any]) -> ValidationResult:
-        """Validate a task definition."""
-        pass
+        """Validate a task definition.
+
+        Expected task structure:
+        {
+            "id": str,           # Required - unique task identifier
+            "name": str,         # Required - task name
+            "description": str,  # Optional - task description
+            "status": str,       # Required - one of VALID_STATUSES
+            "dependencies": [],  # Optional - list of dependent task IDs
+            "agent_type": str,   # Required - one of VALID_AGENT_TYPES
+            "priority": int      # Optional - task priority (1-10)
+        }
+        """
+        errors: List[str] = []
+        warnings: List[str] = []
+        field_errors: Dict[str, List[str]] = {}
+
+        # Check required fields
+        for field in self.REQUIRED_TASK_FIELDS:
+            if field not in task:
+                errors.append(f"Missing required field: {field}")
+                field_errors.setdefault(field, []).append("required")
+            elif task[field] is None or task[field] == "":
+                errors.append(f"Field '{field}' cannot be empty")
+                field_errors.setdefault(field, []).append("empty")
+
+        # Validate 'id' field
+        if "id" in task and task["id"]:
+            if not isinstance(task["id"], str):
+                errors.append("Field 'id' must be a string")
+                field_errors.setdefault("id", []).append("invalid_type")
+
+        # Validate 'name' field
+        if "name" in task and task["name"]:
+            if not isinstance(task["name"], str):
+                errors.append("Field 'name' must be a string")
+                field_errors.setdefault("name", []).append("invalid_type")
+            elif len(task["name"]) < 2:
+                warnings.append("Task name is very short")
+
+        # Validate 'status' field
+        if "status" in task and task["status"]:
+            if task["status"] not in self.VALID_STATUSES:
+                errors.append(
+                    f"Invalid status '{task['status']}'. Must be one of: {', '.join(self.VALID_STATUSES)}"
+                )
+                field_errors.setdefault("status", []).append("invalid_value")
+
+        # Validate 'agent_type' field
+        if "agent_type" in task and task["agent_type"]:
+            if task["agent_type"] not in self.VALID_AGENT_TYPES:
+                errors.append(
+                    f"Invalid agent_type '{task['agent_type']}'. Must be one of: {', '.join(self.VALID_AGENT_TYPES)}"
+                )
+                field_errors.setdefault("agent_type", []).append("invalid_value")
+
+        # Validate 'dependencies' field (optional)
+        if "dependencies" in task:
+            if not isinstance(task["dependencies"], list):
+                errors.append("Field 'dependencies' must be a list")
+                field_errors.setdefault("dependencies", []).append("invalid_type")
+            else:
+                for i, dep in enumerate(task["dependencies"]):
+                    if not isinstance(dep, str):
+                        errors.append(f"Dependency at index {i} must be a string")
+                        field_errors.setdefault("dependencies", []).append(
+                            f"invalid_item_{i}"
+                        )
+
+        # Validate 'priority' field (optional)
+        if "priority" in task:
+            if not isinstance(task["priority"], int):
+                errors.append("Field 'priority' must be an integer")
+                field_errors.setdefault("priority", []).append("invalid_type")
+            elif not (1 <= task["priority"] <= 10):
+                warnings.append(
+                    f"Priority {task['priority']} is outside recommended range (1-10)"
+                )
+
+        # Validate 'description' field (optional)
+        if "description" in task and task["description"]:
+            if not isinstance(task["description"], str):
+                errors.append("Field 'description' must be a string")
+                field_errors.setdefault("description", []).append("invalid_type")
+
+        # In LENIENT mode, convert some errors to warnings
+        if self.level == ValidationLevel.LENIENT:
+            # Move non-critical errors to warnings
+            non_critical = [
+                e
+                for e in errors
+                if "priority" in e.lower() or "description" in e.lower()
+            ]
+            errors = [e for e in errors if e not in non_critical]
+            warnings.extend(non_critical)
+
+        is_valid = len(errors) == 0
+
+        return ValidationResult(
+            is_valid=is_valid,
+            errors=errors,
+            warnings=warnings,
+            field_errors=field_errors,
+        )
 
     def validate_task_input(
         self, task_type: str, inputs: Dict[str, Any]
