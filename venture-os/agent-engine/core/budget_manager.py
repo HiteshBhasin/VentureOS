@@ -50,31 +50,49 @@ class BudgetManager:
         self, budget_type: BudgetType, limit: float, reset_period: Optional[str] = None
     ) -> None:
         """Set a budget limit."""
+
         pass
 
     def get_budget_limit(self, budget_type: BudgetType) -> Optional[BudgetLimit]:
         """Get a budget limit."""
-        pass
+        budget_limit = self._limits.get(budget_type)
+        return budget_limit
+
 
     def remove_budget_limit(self, budget_type: BudgetType) -> bool:
         """Remove a budget limit."""
-        pass
+        removed_budget = self._limits.pop(budget_type)
+        if removed_budget:
+            return True
+        return False
 
     def set_all_limits(self, limits: Dict[str, float]) -> None:
         """Set multiple budget limits at once."""
-        pass
+        limits["budget_type"] = limits.get("budget_type", BudgetLimit.limit)
+        for key, value in limits.items():
+            if not isinstance(value, float) and key == "budget_type":
+                raise ValueError(f"{key} is not a valid budget type. must be Numeric")
+
+
+        # self._limits = limits <- @ TODO this needs to be looked at still
 
     def get_all_limits(self) -> Dict[BudgetType, BudgetLimit]:
         """Get all budget limits."""
-        pass
+        return self._limits
+
 
     # ==================== Usage Tracking ====================
 
     def record_token_usage(
         self, prompt_tokens: int, completion_tokens: int, model: str
-    ) -> None:
+    ) -> Dict[str, float]:
         """Record token usage."""
-        pass
+        tokens = prompt_tokens + completion_tokens
+        recorded_token_model = {model: tokens}
+        if tokens not in self._usage_history:
+            self._usage_history.append(recorded_token_model)
+        return recorded_token_model
+
 
     def record_cost(self, amount: float, source: str, description: str = "") -> None:
         """Record cost expenditure."""
