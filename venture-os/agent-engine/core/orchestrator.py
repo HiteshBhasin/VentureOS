@@ -1,5 +1,24 @@
 # Task scheduling & coordination
 from typing import Any, Dict, List, Optional
+import uuid
+import logging
+
+from .llm_class import LLM
+from .agent_factory import AgentFactory
+from .budget_manager import BudgetManager, BudgetType
+from .events import EventBus, EventType, Event
+from .task_graph import TaskGraph, TaskNode, TaskStatus
+from ..memory.memory_manager import MemoryManager
+from ..monitoring.metrics import MetricsCollector
+from ..monitoring.tracer import Tracer
+from ..models.llm_router import LLMRouter
+from ..tools.tool_registry import ToolRegistry
+from ..agents.coding_agent import CodingAgent
+from ..agents.research_agent import ResearchAgent
+from ..agents.review_agent import ReviewAgent
+from ..agents.runtime_agent import RuntimeAgent
+
+logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
@@ -10,21 +29,200 @@ class Orchestrator:
 
     # ==================== INITIALIZATION & SETUP ====================
 
-    def __init__(self) -> None:
-        """Initialize all subsystems: LLM, agents, memory, budget, metrics, tracer, events."""
-        pass
+    def __init__(self, llm: LLM, config: Optional[Dict[str, Any]] = None) -> None:
+        """Initialize all subsystems: LLM, agents, memory, budget, metrics, tracer, events.
+
+        Args:
+            llm: The LLM instance for agent communication.
+            config: Optional configuration dictionary.
+        """
+        self.llm = llm
+        self.config = config or {}
+
+        # Core subsystems (initialized in initialize_subsystems)
+        self.llm_router: Optional[LLMRouter] = None
+        self.agent_factory: Optional[AgentFactory] = None
+        self.memory_manager: Optional[MemoryManager] = None
+        self.budget_manager: Optional[BudgetManager] = None
+        self.tool_registry: Optional[ToolRegistry] = None
+
+        # Monitoring subsystems
+        self.metrics: Optional[MetricsCollector] = None
+        self.tracer: Optional[Tracer] = None
+
+        # Event system
+        self.event_bus: Optional[EventBus] = None
+
+        # Task management
+        self.task_graph: Optional[TaskGraph] = None
+
+        # Agent tracking
+        self._active_agents: Dict[str, Any] = {}
+        self._agent_results: Dict[str, Any] = {}
+
+        # Request tracking
+        self._correlation_id: Optional[str] = None
+
+        # Initialize all subsystems
+        self.initialize_subsystems()
+        self.register_default_agent_types()
+        self.setup_event_subscriptions()
+
+        logger.info("Orchestrator initialized successfully")
 
     def initialize_subsystems(self) -> None:
         """Set up LLM router, agent factory, memory manager, budget manager, metrics, tracer, event bus."""
-        pass
+        logger.info("Initializing orchestrator subsystems...")
+
+        # Initialize event bus first (other subsystems may emit events)
+        self.event_bus = EventBus()
+        logger.debug("EventBus initialized")
+
+        # Initialize monitoring subsystems
+        service_name = self.config.get("service_name", "agent-engine")
+        self.tracer = Tracer(service_name=service_name)
+        self.metrics = MetricsCollector()
+        logger.debug("Monitoring subsystems initialized (Tracer, MetricsCollector)")
+
+        # Initialize memory manager
+        memory_config = self.config.get("memory", {})
+        self.memory_manager = MemoryManager(config=memory_config)
+        self.memory_manager.initialize()
+        logger.debug("MemoryManager initialized")
+
+        # Initialize budget manager
+        budget_config = self.config.get("budget", {})
+        self.budget_manager = BudgetManager(config=budget_config)
+        self._configure_default_budgets()
+        logger.debug("BudgetManager initialized")
+
+        # Initialize tool registry
+        self.tool_registry = ToolRegistry()
+        logger.debug("ToolRegistry initialized")
+
+        # Initialize LLM router
+        router_config = self.config.get("llm_router", {})
+        self.llm_router = LLMRouter(config=router_config)
+        logger.debug("LLMRouter initialized")
+
+        # Initialize agent factory (requires memory and tools)
+        self.agent_factory = AgentFactory(
+            llm=self.llm,
+            memory_manager=self.memory_manager,
+            tool_registry=self.tool_registry,
+        )
+        logger.debug("AgentFactory initialized")
+
+        # Initialize task graph
+        self.task_graph = TaskGraph()
+        logger.debug("TaskGraph initialized")
+
+        logger.info("All subsystems initialized successfully")
+
+    def _configure_default_budgets(self) -> None:
+        """Configure default budget limits from config or use defaults."""
+        if not self.budget_manager:
+            return
+
+        default_limits = {
+            BudgetType.TOKENS: self.config.get("max_tokens", 1_000_000),
+            BudgetType.COST: self.config.get("max_cost", 100.0),
+            BudgetType.REQUESTS: self.config.get("max_requests", 10_000),
+            BudgetType.TIME: self.config.get("max_time_seconds", 3600),
+        }
+
+        for budget_type, limit in default_limits.items():
+            self.budget_manager.set_budget_limit(budget_type, limit)
 
     def register_default_agent_types(self) -> None:
         """Register coding, research, review, and runtime agent types with the factory."""
-        pass
+        if not self.agent_factory:
+            logger.warning("AgentFactory not initialized, skipping agent registration")
+            return
+
+        # Register all default agent types
+        agent_types = {
+            "coding": CodingAgent,
+            "research": ResearchAgent,
+            "review": ReviewAgent,
+            "runtime": RuntimeAgent,
+        }
+
+        for agent_type, agent_class in agent_types.items():
+            self.agent_factory.register_agent_type(agent_type, agent_class)
+
+        logger.info(
+            f"Registered {len(agent_types)} default agent types: {list(agent_types.keys())}"
+        )
 
     def setup_event_subscriptions(self) -> None:
         """Subscribe to relevant events for orchestration (agent lifecycle, task completion, errors)."""
-        pass
+        if not self.event_bus:
+            logger.warning("EventBus not initialized, skipping event subscriptions")
+            return
+
+        # Subscribe to agent lifecycle events
+        self.event_bus.subscribe(EventType.AGENT_CREATED, self._on_agent_created)
+        self.event_bus.subscribe(EventType.AGENT_STARTED, self._on_agent_started)
+        self.event_bus.subscribe(EventType.AGENT_STOPPED, self._on_agent_stopped)
+        self.event_bus.subscribe(EventType.AGENT_ERROR, self._on_agent_error)
+
+        # Subscribe to task events
+        self.event_bus.subscribe(EventType.TASK_COMPLETED, self._on_task_completed)
+        self.event_bus.subscribe(EventType.TASK_FAILED, self._on_task_failed)
+
+        # Subscribe to budget events
+        self.event_bus.subscribe(EventType.BUDGET_WARNING, self._on_budget_warning)
+        self.event_bus.subscribe(EventType.BUDGET_EXCEEDED, self._on_budget_exceeded)
+
+        logger.info("Event subscriptions configured")
+
+    # ==================== EVENT HANDLERS ====================
+
+    def _on_agent_created(self, event: Event) -> None:
+        """Handle agent created event."""
+        agent_id = event.data.get("agent_id")
+        if agent_id:
+            logger.debug(f"Agent created: {agent_id}")
+
+    def _on_agent_started(self, event: Event) -> None:
+        """Handle agent started event."""
+        agent_id = event.data.get("agent_id")
+        if agent_id:
+            logger.debug(f"Agent started: {agent_id}")
+
+    def _on_agent_stopped(self, event: Event) -> None:
+        """Handle agent stopped event."""
+        agent_id = event.data.get("agent_id")
+        if agent_id:
+            logger.debug(f"Agent stopped: {agent_id}")
+            self.unregister_agent(agent_id)
+
+    def _on_agent_error(self, event: Event) -> None:
+        """Handle agent error event."""
+        agent_id = event.data.get("agent_id")
+        error = event.data.get("error")
+        logger.error(f"Agent error: {agent_id} - {error}")
+
+    def _on_task_completed(self, event: Event) -> None:
+        """Handle task completed event."""
+        task_id = event.data.get("task_id")
+        result = event.data.get("result")
+        if task_id:
+            logger.info(f"Task completed: {task_id}")
+            self.mark_task_completed(task_id, result)
+        logger.error(f"Task failed: {task_id} - {error}")
+
+    def _on_budget_warning(self, event: Event) -> None:
+        """Handle budget warning event."""
+        budget_type = event.data.get("budget_type")
+        usage_percent = event.data.get("usage_percent")
+        logger.warning(f"Budget warning: {budget_type} at {usage_percent}%")
+
+    def _on_budget_exceeded(self, event: Event) -> None:
+        """Handle budget exceeded event."""
+        budget_type = event.data.get("budget_type")
+        logger.error(f"Budget exceeded: {budget_type}")
 
     # ==================== REQUEST PROCESSING ====================
 
