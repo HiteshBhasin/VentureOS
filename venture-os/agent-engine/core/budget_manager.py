@@ -85,29 +85,57 @@ class BudgetManager:
 
     def record_token_usage(
         self, prompt_tokens: int, completion_tokens: int, model: str
-    ) -> Dict[str, float]:
+    ) -> Dict[str, List[Dict[str, Any]]]:
         """Record token usage."""
         tokens = prompt_tokens + completion_tokens
-        recorded_token_model = {model: tokens}
-        if tokens not in self._usage_history:
-            self._usage_history.append(recorded_token_model)
-        return recorded_token_model
+
+        if not hasattr(self, 'token_usage'):
+            self.token_usage = []
+        self.token_usage.append({"prompt_tokens": prompt_tokens,
+                                 "completion_tokens": completion_tokens,
+                                 "model": model})
+        # update budget limits if they exist.
+        if BudgetType.TOKENS in self._limits:
+            self._limits[BudgetType.TOKENS].current_usage += tokens
+        return {'recorded_usage': self.token_usage}
 
 
     def record_cost(self, amount: float, source: str, description: str = "") -> None:
         """Record cost expenditure."""
-        pass
+        if not hasattr(self, 'cost'):
+            self.cost = {}
+
+        self.cost['amount'] = amount
+        self.cost['source'] = source
+        self.cost['description'] = description
+
+        self._usage_history.extend(self.cost)
+
+
 
     def record_request(
         self, request_type: str, metadata: Optional[Dict] = None
     ) -> None:
         """Record an API request."""
-        pass
+        records=[{
+            "type": request_type,
+            "metadata": metadata,
+        }]
+
 
     def record_time_usage(
         self, duration_seconds: float, task_id: Optional[str] = None
     ) -> None:
         """Record time usage."""
+        if not hasattr(self, 'time_records'):
+            self.time_records = []
+
+            # Store the time usage
+        self.time_records.append({
+            "duration_seconds": duration_seconds,
+            "task_id": task_id,
+            "timestamp": datetime.now()  # or use time.time()
+        })
         pass
 
     def get_current_usage(self, budget_type: BudgetType) -> float:
