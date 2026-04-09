@@ -169,15 +169,18 @@ class BudgetManager:
 
     def has_budget_for_tokens(self, estimated_tokens: int) -> bool:
         """Check if token budget allows estimated usage."""
-        
-        pass
+        return self._limits[BudgetType.TOKENS].current_usage>=estimated_tokens
+
 
     def has_budget_for_cost(self, estimated_cost: float) -> bool:
         """Check if cost budget allows estimated expense."""
-        pass
+        return self._limits[BudgetType.COST].current_usage >= estimated_cost
+
 
     def has_budget_for_request(self) -> bool:
         """Check if request budget allows another request."""
+        limits = self._limits
+        
         pass
 
     def has_budget_for_time(self, estimated_seconds: float) -> bool:
