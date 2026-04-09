@@ -1,4 +1,5 @@
 # Token/cost budget tracking
+import logging
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -121,6 +122,7 @@ class BudgetManager:
             "type": request_type,
             "metadata": metadata,
         }]
+        self._usage_history.extend(records)
 
 
     def record_time_usage(
@@ -128,7 +130,7 @@ class BudgetManager:
     ) -> None:
         """Record time usage."""
         if not hasattr(self, 'time_records'):
-            self.time_records = []
+            time_records = []
 
             # Store the time usage
         self.time_records.append({
@@ -136,30 +138,38 @@ class BudgetManager:
             "task_id": task_id,
             "timestamp": datetime.now()  # or use time.time()
         })
-        pass
+
 
     def get_current_usage(self, budget_type: BudgetType) -> float:
         """Get current usage for a budget type."""
-        pass
+        current_usage = self._usage_history[-1].get("budget_type", budget_type)
+        return current_usage
+
 
     def get_usage_history(
         self, budget_type: Optional[BudgetType] = None, limit: int = 100
     ) -> List[Dict[str, Any]]:
         """Get usage history."""
-        pass
+        return self._usage_history
+
 
     # ==================== Budget Checking ====================
 
     def check_budget(self, budget_type: BudgetType, amount: float) -> bool:
         """Check if amount is within budget."""
-        pass
+        if amount <= 0:
+            logging.log("amount has to be greater than 0")
+        usage_amount = self._limits[budget_type].current_usage
+        return usage_amount >= amount
 
-    def check_all_budgets(self) -> Dict[BudgetType, bool]:
+
+    def check_all_budgets(self) -> Dict[BudgetType, any]:
         """Check all budgets."""
-        pass
+        return self._limits
 
     def has_budget_for_tokens(self, estimated_tokens: int) -> bool:
         """Check if token budget allows estimated usage."""
+        
         pass
 
     def has_budget_for_cost(self, estimated_cost: float) -> bool:
