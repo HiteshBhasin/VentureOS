@@ -45,6 +45,8 @@ class BudgetManager:
         self._limits: Dict[BudgetType, BudgetLimit] = {}
         self._alerts: List[BudgetAlert] = []
         self._usage_history: List[Dict[str, Any]] = []
+        self._model_pricing: Dict[str, Dict[str, float]] = {}
+        self._reservations: Dict[str, Dict[str, Any]] = {}
 
     # ==================== Budget Configuration ====================
 
@@ -52,8 +54,16 @@ class BudgetManager:
         self, budget_type: BudgetType, limit: float, reset_period: Optional[str] = None
     ) -> None:
         """Set a budget limit."""
+        if limit < 0:
+            raise ValueError("Limit must be non-negative.")
 
-        pass
+        self._limits[budget_type] = BudgetLimit(
+            budget_type=budget_type,
+            limit=limit,
+            current_usage=0.0,
+            reset_period=reset_period,
+            last_reset=datetime.now(),
+        )
 
     def get_budget_limit(self, budget_type: BudgetType) -> Optional[BudgetLimit]:
         """Get a budget limit."""
@@ -161,7 +171,7 @@ class BudgetManager:
         usage_amount = self._limits[budget_type].current_usage
         return usage_amount >= amount
 
-    def check_all_budgets(self) -> Dict[BudgetType, any]:
+    def check_all_budgets(self) -> Dict[BudgetType, Any]:
         """Check all budgets."""
         return self._limits
 
@@ -310,52 +320,247 @@ class BudgetManager:
 
     def reset_usage(self, budget_type: Optional[BudgetType] = None) -> None:
         """Reset usage counters."""
-        pass
+        if budget_type is None:
+            self.reset_all_usage()
+        elif budget_type in self._limits:
+            self._limits[budget_type].current_usage = 0.0
+            self._limits[budget_type].last_reset = datetime.now()
+            logging.info(f"Reset usage for {budget_type.value}")
 
     def reset_all_usage(self) -> None:
         """Reset all usage counters."""
-        pass
+        for budget_type, budget_limit in self._limits.items():
+            budget_limit.current_usage = 0.0
+            budget_limit.last_reset = datetime.now()
+        logging.info("Reset all usage counters")
 
     def check_reset_periods(self) -> None:
         """Check and perform periodic resets."""
-        pass
+        now = datetime.now()
+        for budget_type, budget_limit in self._limits.items():
+            if budget_limit.reset_period is None:
+                continue
+
+            elapsed = now - budget_limit.last_reset
+            should_reset = False
+
+            if (
+                budget_limit.reset_period == "hourly"
+                and elapsed.total_seconds() >= 3600
+            ):
+                should_reset = True
+            elif budget_limit.reset_period == "daily" and elapsed.days >= 1:
+                should_reset = True
+            elif budget_limit.reset_period == "weekly" and elapsed.days >= 7:
+                should_reset = True
+            elif budget_limit.reset_period == "monthly" and elapsed.days >= 30:
+                should_reset = True
+
+            if should_reset:
+                budget_limit.current_usage = 0.0
+                budget_limit.last_reset = now
+                # Reset any alerts for this budget type
+                for alert in self._alerts:
+                    if alert.budget_type == budget_type:
+                        alert.triggered = False
+                logging.info(f"Periodic reset performed for {budget_type.value}")
 
     def clear_history(self) -> None:
         """Clear usage history."""
-        pass
+        self._usage_history.clear()
+        if hasattr(self, "token_usage"):
+            self.token_usage.clear()
+        if hasattr(self, "time_records"):
+            self.time_records.clear()
+        if hasattr(self, "cost"):
+            self.cost.clear()
+        logging.info("Cleared all usage history")
 
     # ==================== Reporting ====================
 
     def get_budget_status(self) -> Dict[str, Any]:
         """Get comprehensive budget status."""
-        pass
+        status = {
+            "timestamp": datetime.now().isoformat(),
+            "budgets": {},
+            "alerts": [],
+            "overall_health": "healthy",
+        }
+
+        for budget_type, budget_limit in self._limits.items():
+            usage_percent = (
+                (budget_limit.current_usage / budget_limit.limit * 100)
+                if budget_limit.limit > 0
+                else 0
+            )
+            remaining = budget_limit.limit - budget_limit.current_usage
+
+            status["budgets"][budget_type.value] = {
+                "limit": budget_limit.limit,
+                "current_usage": budget_limit.current_usage,
+                "remaining": remaining,
+                "usage_percent": round(usage_percent, 2),
+                "reset_period": budget_limit.reset_period,
+                "last_reset": budget_limit.last_reset.isoformat(),
+            }
+
+            if usage_percent >= 90:
+                status["overall_health"] = "critical"
+            elif usage_percent >= 75 and status["overall_health"] != "critical":
+                status["overall_health"] = "warning"
+
+        for alert in self._alerts:
+            status["alerts"].append(
+                {
+                    "budget_type": alert.budget_type.value,
+                    "threshold_percent": alert.threshold_percent,
+                    "triggered": alert.triggered,
+                    "callback": alert.callback,
+                }
+            )
+
+        return status
 
     def get_usage_summary(self) -> Dict[str, Any]:
         """Get usage summary."""
-        pass
+        summary = {
+            "timestamp": datetime.now().isoformat(),
+            "total_records": len(self._usage_history),
+            "by_type": {},
+        }
+
+        for budget_type, budget_limit in self._limits.items():
+            summary["by_type"][budget_type.value] = {
+                "current_usage": budget_limit.current_usage,
+                "limit": budget_limit.limit,
+                "remaining": budget_limit.limit - budget_limit.current_usage,
+            }
+
+        if hasattr(self, "token_usage"):
+            total_prompt = sum(t.get("prompt_tokens", 0) for t in self.token_usage)
+            total_completion = sum(
+                t.get("completion_tokens", 0) for t in self.token_usage
+            )
+            summary["tokens"] = {
+                "total_prompt_tokens": total_prompt,
+                "total_completion_tokens": total_completion,
+                "total_tokens": total_prompt + total_completion,
+            }
+
+        return summary
 
     def generate_budget_report(self, period: str = "daily") -> Dict[str, Any]:
         """Generate budget report for period."""
-        pass
+        report = {
+            "report_type": "budget_report",
+            "period": period,
+            "generated_at": datetime.now().isoformat(),
+            "status": self.get_budget_status(),
+            "summary": self.get_usage_summary(),
+            "alerts_triggered": [a for a in self._alerts if a.triggered],
+            "recommendations": [],
+        }
+
+        # Add recommendations based on usage patterns
+        for budget_type, budget_limit in self._limits.items():
+            if budget_limit.limit > 0:
+                usage_percent = (budget_limit.current_usage / budget_limit.limit) * 100
+                if usage_percent >= 90:
+                    report["recommendations"].append(
+                        f"Critical: {budget_type.value} budget is at {usage_percent:.1f}%. Consider increasing limit or reducing usage."
+                    )
+                elif usage_percent >= 75:
+                    report["recommendations"].append(
+                        f"Warning: {budget_type.value} budget is at {usage_percent:.1f}%. Monitor closely."
+                    )
+
+        return report
 
     def export_usage_data(self, format: str = "json") -> Any:
         """Export usage data."""
-        pass
+        import json
+
+        data = {
+            "exported_at": datetime.now().isoformat(),
+            "limits": {
+                bt.value: {
+                    "limit": bl.limit,
+                    "current_usage": bl.current_usage,
+                    "reset_period": bl.reset_period,
+                    "last_reset": bl.last_reset.isoformat(),
+                }
+                for bt, bl in self._limits.items()
+            },
+            "alerts": [
+                {
+                    "budget_type": a.budget_type.value,
+                    "threshold_percent": a.threshold_percent,
+                    "triggered": a.triggered,
+                }
+                for a in self._alerts
+            ],
+            "usage_history": self._usage_history,
+        }
+
+        if format == "json":
+            return json.dumps(data, indent=2, default=str)
+        elif format == "dict":
+            return data
+        else:
+            raise ValueError(f"Unsupported export format: {format}")
 
     # ==================== Cost Estimation ====================
 
     def estimate_token_cost(self, tokens: int, model: str) -> float:
         """Estimate cost for token usage."""
-        pass
+        if model not in self._model_pricing:
+            logging.warning(f"No pricing set for model {model}, returning 0.0")
+            return 0.0
+
+        pricing = self._model_pricing[model]
+        # Assume tokens are split evenly between input/output if not specified
+        input_cost = pricing.get("input_per_1k", 0.0) * (tokens / 1000)
+        output_cost = pricing.get("output_per_1k", 0.0) * (tokens / 1000)
+
+        return (input_cost + output_cost) / 2  # Average since we don't know split
 
     def estimate_task_cost(self, task: Dict[str, Any]) -> float:
         """Estimate cost for a task."""
-        pass
+        estimated_cost = 0.0
+
+        # Estimate based on task type and complexity
+        estimated_tokens = task.get("estimated_tokens", 1000)
+        model = task.get("model", "default")
+
+        # Token cost
+        token_cost = self.estimate_token_cost(estimated_tokens, model)
+        estimated_cost += token_cost
+
+        # Time cost if applicable
+        estimated_time = task.get("estimated_time_seconds", 0)
+        if estimated_time > 0 and BudgetType.TIME in self._limits:
+            time_limit = self._limits[BudgetType.TIME]
+            if time_limit.limit > 0:
+                time_cost = (estimated_time / time_limit.limit) * time_limit.limit
+                estimated_cost += time_cost * 0.001  # Nominal time cost
+
+        return estimated_cost
 
     def get_model_pricing(self, model: str) -> Dict[str, float]:
         """Get pricing for a model."""
-        pass
+        return self._model_pricing.get(model, {})
 
     def set_model_pricing(self, model: str, pricing: Dict[str, float]) -> None:
         """Set pricing for a model."""
+        if not isinstance(pricing, dict):
+            raise ValueError("Pricing must be a dictionary")
+
+        # Validate pricing keys
+        valid_keys = {"input_per_1k", "output_per_1k", "per_request", "per_minute"}
+        for key in pricing.keys():
+            if key not in valid_keys:
+                logging.warning(f"Unknown pricing key: {key}")
+
+        self._model_pricing[model] = pricing
+        logging.info(f"Set pricing for model {model}: {pricing}")
         pass
