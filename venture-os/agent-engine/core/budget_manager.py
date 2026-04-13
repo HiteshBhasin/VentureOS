@@ -329,7 +329,7 @@ class BudgetManager:
 
     def reset_all_usage(self) -> None:
         """Reset all usage counters."""
-        for budget_type, budget_limit in self._limits.items():
+        for _, budget_limit in self._limits.items():
             budget_limit.current_usage = 0.0
             budget_limit.last_reset = datetime.now()
         logging.info("Reset all usage counters")
