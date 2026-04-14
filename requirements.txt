@@ -30,3 +30,4 @@ tiktoken
 pyOTP
 two-fast-auth
 qrcode
+https://medium.com/@TGod-Ajayi/react-next-js-tyepscript-project-architecture-setup-a-beginners-guide-a63d8469805b
