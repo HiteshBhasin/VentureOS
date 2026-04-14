@@ -1,4 +1,6 @@
 # Event system for agent communication
+import asyncio
+import logging
 from typing import Any, Callable, Dict, List, Optional
 from enum import Enum
 from dataclasses import dataclass
@@ -67,7 +69,10 @@ class EventBus:
             event_type: The type of event to subscribe to.
             handler: Callback function to invoke when event is published.
         """
-        pass
+        if event_type not in self._subscribers:
+            self._subscribers[event_type] = []
+            self._subscribers[event_type].append(handler)
+        logging.info(f"Subscribed handler to event type: {event_type}")
 
     def unsubscribe(self, event_type: EventType, handler: Callable) -> None:
         """Unsubscribe a handler from an event type.
@@ -76,7 +81,8 @@ class EventBus:
             event_type: The type of event to unsubscribe from.
             handler: The handler to remove.
         """
-        pass
+        self._subscribers.get(event_type, []).remove(handler)
+        logging.info(f"Unsubscribed handler from event type: {event_type}")
 
     def publish(self, event: Event) -> None:
         """Publish an event to all subscribers.
@@ -84,15 +90,17 @@ class EventBus:
         Args:
             event: The event to publish.
         """
-        pass
+        for handler in self._subscribers.get(event.event_type, []):
+            handler(event)
 
-    def publish_async(self, event: Event) -> None:
+    async def publish_async(self, event: Event) -> None:
         """Publish an event asynchronously.
 
         Args:
             event: The event to publish.
         """
-        pass
+        handlers = self._subscribers.get(event.event_type, [])
+        await asyncio.gather(*[handler(event) for handler in handlers])
 
     def get_history(
         self, event_type: Optional[EventType] = None, limit: int = 100
@@ -106,10 +114,18 @@ class EventBus:
         Returns:
             List of events.
         """
-        pass
+
+        return (
+            self._event_history[-limit:]
+            if event_type is None
+            else [
+                event for event in self._event_history if event.event_type == event_type
+            ][:limit]
+        )
 
     def clear_history(self) -> None:
         """Clear the event history."""
+        self._event_history.clear()
         pass
 
 
@@ -121,7 +137,7 @@ class EventEmitter:
 
     def set_event_bus(self, event_bus: EventBus) -> None:
         """Set the event bus for this emitter."""
-        pass
+        self._event_bus = event_bus
 
     def emit(
         self,
@@ -136,4 +152,15 @@ class EventEmitter:
             data: Event data payload.
             correlation_id: Optional correlation ID for tracing.
         """
-        pass
+        if self._event_bus is None:
+            logging.warning(f"No event bus set, cannot emit {event_type}")
+            return
+
+        event = Event(
+            event_type=event_type,
+            source=self.__class__.__name__,
+            timestamp=datetime.now(),
+            data=data,
+            correlation_id=correlation_id,
+        )
+        self._event_bus.publish(event)
