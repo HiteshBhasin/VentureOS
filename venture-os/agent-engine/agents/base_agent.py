@@ -26,6 +26,19 @@ class BaseAgent(ABC):
         self.status = "idle"  # idle, running, paused, stopped, error
         self.context: Dict[str, Any] = {}
         self.history: List[Dict[str, Any]] = []
+        self.code_context: Dict[str, Any] = {}
+
+    def load_document_to_context(self, path: str, doc_id: Optional[str] = None) -> bool:
+        """Load file content into code_context under doc_id (or path if not provided). Returns True if successful."""
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read()
+            key = doc_id if doc_id is not None else path
+            self.code_context[key] = content
+            return True
+        except Exception as e:
+            logging.error(f"Failed to load document '{path}': {e}")
+            return False
 
     # ==================== Lifecycle Methods ====================
 
