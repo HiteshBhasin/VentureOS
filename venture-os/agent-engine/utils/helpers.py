@@ -41,7 +41,6 @@ def timestamp_now() -> str:
         ISO formatted timestamp string.
     """
     return datetime.utcnow().isoformat() + "Z"
-    pass
 
 
 def parse_timestamp(timestamp: str) -> datetime:
@@ -54,7 +53,6 @@ def parse_timestamp(timestamp: str) -> datetime:
         Datetime object.
     """
     return datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-    pass
 
 
 def deep_merge(base: Dict, override: Dict) -> Dict:
