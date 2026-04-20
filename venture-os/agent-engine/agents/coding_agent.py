@@ -22,7 +22,6 @@ class CodingAgent(BaseAgent):
 
     def execute_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a coding task (generation, debugging, refactoring)."""
-        pass
 
     # ==================== Code Generation ====================
 
