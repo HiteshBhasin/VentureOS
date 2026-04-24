@@ -63,7 +63,7 @@ class StateMachine:
     @property
     def current_state(self) -> AgentState:
         """Get the current state."""
-        pass
+        return self._current_state
 
     def can_transition_to(self, target_state: AgentState) -> bool:
         """Check if transition to target state is valid.
@@ -74,7 +74,7 @@ class StateMachine:
         Returns:
             True if transition is valid, False otherwise.
         """
-        pass
+        return target_state in self.VALID_TRANSITIONS.get(self._current_state, set())
 
     def transition_to(self, target_state: AgentState) -> bool:
         """Attempt to transition to target state.
@@ -85,7 +85,23 @@ class StateMachine:
         Returns:
             True if transition succeeded, False otherwise.
         """
-        pass
+        if not self.can_transition_to(target_state):
+            return False
+        # Run exit callbacks for current state
+        for cb in self._on_exit_callbacks.get(self._current_state, []):
+            try:
+                cb()
+            except Exception:
+                pass
+        self._current_state = target_state
+        self._state_history.append(target_state)
+        # Run enter callbacks for new state
+        for cb in self._on_enter_callbacks.get(target_state, []):
+            try:
+                cb()
+            except Exception:
+                pass
+        return True
 
     def on_enter(self, state: AgentState, callback: Callable) -> None:
         """Register a callback for entering a state.
@@ -94,7 +110,7 @@ class StateMachine:
             state: The state to register the callback for.
             callback: Function to call when entering the state.
         """
-        pass
+        self._on_enter_callbacks.setdefault(state, []).append(callback)
 
     def on_exit(self, state: AgentState, callback: Callable) -> None:
         """Register a callback for exiting a state.
@@ -103,23 +119,28 @@ class StateMachine:
             state: The state to register the callback for.
             callback: Function to call when exiting the state.
         """
-        pass
+        self._on_exit_callbacks.setdefault(state, []).append(callback)
 
     def get_history(self) -> List[AgentState]:
         """Get the state transition history."""
-        pass
+        return list(self._state_history)
 
     def reset(self) -> None:
         """Reset the state machine to initial state."""
-        pass
+        self._current_state = AgentState.IDLE
+        self._state_history = [AgentState.IDLE]
 
     def is_terminal(self) -> bool:
         """Check if current state is a terminal state."""
-        pass
+        return self._current_state in {
+            AgentState.COMPLETED,
+            AgentState.FAILED,
+            AgentState.STOPPED,
+        }
 
     def get_available_transitions(self) -> Set[AgentState]:
         """Get states that can be transitioned to from current state."""
-        pass
+        return set(self.VALID_TRANSITIONS.get(self._current_state, set()))
 
 
 class AgentStateMixin:
@@ -130,7 +151,7 @@ class AgentStateMixin:
 
     def get_state(self) -> AgentState:
         """Get current agent state."""
-        pass
+        return self._state_machine.current_state
 
     def set_state(self, state: AgentState) -> bool:
         """Set agent state with validation.
@@ -141,16 +162,20 @@ class AgentStateMixin:
         Returns:
             True if state change succeeded.
         """
-        pass
+        return self._state_machine.transition_to(state)
 
     def is_running(self) -> bool:
         """Check if agent is currently running."""
-        pass
+        return self._state_machine.current_state == AgentState.RUNNING
 
     def is_idle(self) -> bool:
         """Check if agent is idle."""
-        pass
+        return self._state_machine.current_state == AgentState.IDLE
 
     def is_finished(self) -> bool:
         """Check if agent has finished (completed, failed, or stopped)."""
-        pass
+        return self._state_machine.current_state in {
+            AgentState.COMPLETED,
+            AgentState.FAILED,
+            AgentState.STOPPED,
+        }

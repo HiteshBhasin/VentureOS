@@ -35,17 +35,17 @@ class Meta_agent:
         parsed_response = json.loads(response) if response else {}
         return parsed_response
 
-    def decompose_goals(self, response: list):
+    def decompose_goals(self, response: dict):
         """_summary_
 
         Args:
-            response (str): _description_
+            response (dict): parsed response from analyze_user_requirement
 
         Returns:
             _type_: _description_
         """
         tasks = []
-        if isinstance(response, list) and "required_capabilities" in response:
+        if isinstance(response, dict) and "required_capabilities" in response:
             for task in response["required_capabilities"]:
                 tasks.append(
                     {
@@ -84,11 +84,11 @@ class Meta_agent:
 
     def supervise(self, tasks):
         for task in tasks:
-            if task["status"] == "peneding" and self.depency_satified(task):
+            if task["status"] == "pending" and self.depency_satified(task):
                 self.spawn_base_agent(task)
                 task["assigned_agent"] = "agent_id"  # assign the agent id to the task
                 task["status"] = "in progress"
-                task["dependency"].append(
+                task["dependencies"].append(
                     task["task_name"]
                 )  # add the task name to the dependency list of other tasks
             elif task["status"] == "in progress":
@@ -100,7 +100,23 @@ class Meta_agent:
                     self.handle_failure(task)
 
     def refine_strategy(self):
-        pass
+        """Re-analyze current task statuses and adjust strategy."""
+        all_tasks = getattr(self, "_tasks", [])
+        if not all_tasks:
+            return
+        failed_tasks = [t for t in all_tasks if t.get("status") == "failed"]
+        pending_tasks = [t for t in all_tasks if t.get("status") == "pending"]
+        # Reset failed tasks for retry
+        for task in failed_tasks:
+            task["status"] = "pending"
+            task["assigned_agent"] = None
+            logging.info(f"Refining strategy: resetting failed task '{task['task_name']}' for retry")
+        # Re-sort pending tasks by dependency order
+        if pending_tasks:
+            sorted_tasks = self._topological_sort(pending_tasks)
+            for i, task in enumerate(sorted_tasks):
+                task["priority"] = i
+            logging.info(f"Refining strategy: re-prioritized {len(sorted_tasks)} pending tasks")
 
     def _topological_sort(self, tasks):
         """_summary_

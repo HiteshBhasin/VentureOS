@@ -69,9 +69,7 @@ class EventBus:
             event_type: The type of event to subscribe to.
             handler: Callback function to invoke when event is published.
         """
-        if event_type not in self._subscribers:
-            self._subscribers[event_type] = []
-            self._subscribers[event_type].append(handler)
+        self._subscribers.setdefault(event_type, []).append(handler)
         logging.info(f"Subscribed handler to event type: {event_type}")
 
     def unsubscribe(self, event_type: EventType, handler: Callable) -> None:
@@ -90,6 +88,7 @@ class EventBus:
         Args:
             event: The event to publish.
         """
+        self._event_history.append(event)
         for handler in self._subscribers.get(event.event_type, []):
             handler(event)
 
@@ -126,7 +125,6 @@ class EventBus:
     def clear_history(self) -> None:
         """Clear the event history."""
         self._event_history.clear()
-        pass
 
 
 class EventEmitter:

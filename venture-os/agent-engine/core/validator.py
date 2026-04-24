@@ -1,4 +1,6 @@
 # Meta-Agent Validation
+import json
+import re
 from typing import Any, Dict, List, Optional, Type
 from dataclasses import dataclass
 from enum import Enum
@@ -462,23 +464,109 @@ class Validator:
         self, data: Any, schema: Dict[str, Any]
     ) -> ValidationResult:
         """Validate data against a JSON schema."""
-        pass
+        errors: List[str] = []
+        warnings: List[str] = []
+        field_errors: Dict[str, List[str]] = {}
+
+        schema_type = schema.get("type")
+
+        if schema_type == "object":
+            if not isinstance(data, dict):
+                errors.append("Data must be a JSON object")
+                return ValidationResult(is_valid=False, errors=errors, warnings=warnings, field_errors=field_errors)
+            for field in schema.get("required", []):
+                if field not in data:
+                    errors.append(f"Missing required field: {field}")
+                    field_errors.setdefault(field, []).append("required")
+            for field, field_schema in schema.get("properties", {}).items():
+                if field in data:
+                    sub = self.validate_against_schema(data[field], field_schema)
+                    errors.extend(f"{field}: {e}" for e in sub.errors)
+                    warnings.extend(sub.warnings)
+                    if sub.field_errors:
+                        field_errors.setdefault(field, []).extend(sub.errors)
+
+        elif schema_type == "array":
+            if not isinstance(data, list):
+                errors.append("Data must be an array")
+                return ValidationResult(is_valid=False, errors=errors, warnings=warnings, field_errors=field_errors)
+            items_schema = schema.get("items")
+            if items_schema:
+                for i, item in enumerate(data):
+                    sub = self.validate_against_schema(item, items_schema)
+                    errors.extend(f"[{i}]: {e}" for e in sub.errors)
+
+        elif schema_type == "string":
+            if not isinstance(data, str):
+                errors.append("Value must be a string")
+            else:
+                min_len = schema.get("minLength", 0)
+                max_len = schema.get("maxLength")
+                if len(data) < min_len:
+                    errors.append(f"String is too short (min length {min_len})")
+                if max_len is not None and len(data) > max_len:
+                    errors.append(f"String is too long (max length {max_len})")
+                pattern = schema.get("pattern")
+                if pattern and not re.search(pattern, data):
+                    errors.append(f"String does not match required pattern")
+
+        elif schema_type in ("integer", "number"):
+            expected: Any = int if schema_type == "integer" else (int, float)
+            if not isinstance(data, expected):
+                errors.append(f"Value must be a {schema_type}")
+            else:
+                if "minimum" in schema and data < schema["minimum"]:
+                    errors.append(f"Value must be >= {schema['minimum']}")
+                if "maximum" in schema and data > schema["maximum"]:
+                    errors.append(f"Value must be <= {schema['maximum']}")
+
+        elif schema_type == "boolean":
+            if not isinstance(data, bool):
+                errors.append("Value must be a boolean")
+
+        enum_values = schema.get("enum")
+        if enum_values is not None and data not in enum_values:
+            errors.append(f"Value must be one of: {enum_values}")
+            field_errors.setdefault("value", []).append("invalid_enum")
+
+        is_valid = len(errors) == 0
+        return ValidationResult(is_valid=is_valid, errors=errors, warnings=warnings, field_errors=field_errors)
+        
 
     def validate_type(self, value: Any, expected_type: Type) -> bool:
         """Validate value is of expected type."""
-        pass
+        return isinstance(value, expected_type)
+        
 
     def validate_required_fields(
         self, data: Dict[str, Any], required: List[str]
     ) -> ValidationResult:
         """Validate required fields are present."""
-        pass
+        for field in required:
+            if field not in data:
+                return ValidationResult(
+                    is_valid=False,
+                    errors=[f"Missing required field: {field}"],
+                    warnings=[],
+                    field_errors={field: ["required"]},
+                )
+        return ValidationResult(is_valid=True, errors=[], warnings=[], field_errors={})
+        
 
     def validate_field_types(
         self, data: Dict[str, Any], field_types: Dict[str, Type]
     ) -> ValidationResult:
         """Validate field types match expected."""
-        pass
+        errors: List[str] = []
+        field_errors: Dict[str, List[str]] = {}
+        for field, expected_type in field_types.items():
+            if field in data and not isinstance(data[field], expected_type):
+                errors.append(
+                    f"Field '{field}' must be of type {expected_type.__name__}"
+                )
+                field_errors.setdefault(field, []).append("invalid_type")
+        is_valid = len(errors) == 0
+        return ValidationResult(is_valid=is_valid, errors=errors, warnings=[], field_errors=field_errors)
 
     # ==================== Data Validation ====================
 
@@ -490,7 +578,22 @@ class Validator:
         pattern: Optional[str] = None,
     ) -> ValidationResult:
         """Validate string value."""
-        pass
+        errors: List[str] = []
+        if not isinstance(value, str):
+            return ValidationResult(
+                is_valid=False,
+                errors=["Value must be a string"],
+                warnings=[],
+                field_errors={"value": ["invalid_type"]},
+            )
+        if len(value) < min_length:
+            errors.append(f"String is too short (minimum {min_length} characters)")
+        if max_length is not None and len(value) > max_length:
+            errors.append(f"String is too long (maximum {max_length} characters)")
+        if pattern is not None and not re.search(pattern, value):
+            errors.append(f"String does not match required pattern")
+        is_valid = len(errors) == 0
+        return ValidationResult(is_valid=is_valid, errors=errors, warnings=[], field_errors={})
 
     def validate_number(
         self,
@@ -499,7 +602,20 @@ class Validator:
         max_val: Optional[float] = None,
     ) -> ValidationResult:
         """Validate numeric value."""
-        pass
+        errors: List[str] = []
+        if not isinstance(value, (int, float)):
+            return ValidationResult(
+                is_valid=False,
+                errors=["Value must be a number"],
+                warnings=[],
+                field_errors={"value": ["invalid_type"]},
+            )
+        if min_val is not None and value < min_val:
+            errors.append(f"Value must be >= {min_val}")
+        if max_val is not None and value > max_val:
+            errors.append(f"Value must be <= {max_val}")
+        is_valid = len(errors) == 0
+        return ValidationResult(is_valid=is_valid, errors=errors, warnings=[], field_errors={})
 
     def validate_list(
         self,
@@ -509,29 +625,121 @@ class Validator:
         item_type: Optional[Type] = None,
     ) -> ValidationResult:
         """Validate list value."""
-        pass
+        errors: List[str] = []
+        if not isinstance(value, list):
+            return ValidationResult(
+                is_valid=False,
+                errors=["Value must be a list"],
+                warnings=[],
+                field_errors={"value": ["invalid_type"]},
+            )
+        if len(value) < min_items:
+            errors.append(f"List must contain at least {min_items} items")
+        if max_items is not None and len(value) > max_items:
+            errors.append(f"List must contain at most {max_items} items")
+        if item_type is not None:
+            for i, item in enumerate(value):
+                if not isinstance(item, item_type):
+                    errors.append(
+                        f"Item at index {i} must be of type {item_type.__name__}"
+                    )
+        is_valid = len(errors) == 0
+        return ValidationResult(is_valid=is_valid, errors=errors, warnings=[], field_errors={})
 
     def validate_dict(
         self, value: Dict, required_keys: Optional[List[str]] = None
     ) -> ValidationResult:
         """Validate dictionary value."""
-        pass
+        errors: List[str] = []
+        field_errors: Dict[str, List[str]] = {}
+        if not isinstance(value, dict):
+            return ValidationResult(
+                is_valid=False,
+                errors=["Value must be a dictionary"],
+                warnings=[],
+                field_errors={"value": ["invalid_type"]},
+            )
+        if required_keys:
+            for key in required_keys:
+                if key not in value:
+                    errors.append(f"Missing required key: {key}")
+                    field_errors.setdefault(key, []).append("required")
+        is_valid = len(errors) == 0
+        return ValidationResult(is_valid=is_valid, errors=errors, warnings=[], field_errors=field_errors)
 
     def validate_enum(self, value: Any, allowed_values: List[Any]) -> ValidationResult:
         """Validate value is in allowed values."""
-        pass
+        if value not in allowed_values:
+            return ValidationResult(
+                is_valid=False,
+                errors=[f"Value '{value}' must be one of: {', '.join(str(v) for v in allowed_values)}"],
+                warnings=[],
+                field_errors={"value": ["invalid_enum"]},
+            )
+        return ValidationResult(is_valid=True, errors=[], warnings=[], field_errors={})
 
     def validate_url(self, url: str) -> ValidationResult:
         """Validate URL format."""
-        pass
+        if not isinstance(url, str) or not url:
+            return ValidationResult(
+                is_valid=False,
+                errors=["URL must be a non-empty string"],
+                warnings=[],
+                field_errors={"url": ["invalid_type"]},
+            )
+        _url_re = re.compile(
+            r"^(https?|ftp)://"
+            r"(?:[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+)"
+            r"$",
+            re.IGNORECASE,
+        )
+        if not _url_re.match(url):
+            return ValidationResult(
+                is_valid=False,
+                errors=[f"Invalid URL format: '{url}'"],
+                warnings=[],
+                field_errors={"url": ["invalid_format"]},
+            )
+        return ValidationResult(is_valid=True, errors=[], warnings=[], field_errors={})
 
     def validate_email(self, email: str) -> ValidationResult:
         """Validate email format."""
-        pass
+        if not isinstance(email, str) or not email:
+            return ValidationResult(
+                is_valid=False,
+                errors=["Email must be a non-empty string"],
+                warnings=[],
+                field_errors={"email": ["invalid_type"]},
+            )
+        _email_re = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", re.IGNORECASE)
+        if not _email_re.match(email):
+            return ValidationResult(
+                is_valid=False,
+                errors=[f"Invalid email format: '{email}'"],
+                warnings=[],
+                field_errors={"email": ["invalid_format"]},
+            )
+        return ValidationResult(is_valid=True, errors=[], warnings=[], field_errors={})
 
     def validate_json(self, json_str: str) -> ValidationResult:
         """Validate JSON string."""
-        pass
+        if not isinstance(json_str, str):
+            return ValidationResult(
+                is_valid=False,
+                errors=["JSON input must be a string"],
+                warnings=[],
+                field_errors={"json": ["invalid_type"]},
+            )
+        try:
+            json.loads(json_str)
+        except json.JSONDecodeError as exc:
+            return ValidationResult(
+                is_valid=False,
+                errors=[f"Invalid JSON: {exc}"],
+                warnings=[],
+                field_errors={"json": ["parse_error"]},
+            )
+        return ValidationResult(is_valid=True, errors=[], warnings=[], field_errors={})
 
     # ==================== Business Rule Validation ====================
 
@@ -539,51 +747,131 @@ class Validator:
         self, task: Dict[str, Any], budget: Dict[str, float]
     ) -> ValidationResult:
         """Validate task against budget constraints."""
-        pass
+        errors: List[str] = []
+        warnings: List[str] = []
+        field_errors: Dict[str, List[str]] = {}
+
+        estimated_cost = task.get("estimated_cost", 0.0)
+        total_budget = budget.get("total", 0.0)
+        remaining_budget = budget.get("remaining", total_budget)
+
+        if estimated_cost > remaining_budget:
+            errors.append(
+                f"Task estimated cost ({estimated_cost}) exceeds remaining budget ({remaining_budget})"
+            )
+            field_errors.setdefault("budget", []).append("insufficient")
+
+        if total_budget > 0 and remaining_budget / total_budget < 0.1:
+            warnings.append("Less than 10% of total budget remaining")
+
+        token_limit = budget.get("token_limit")
+        estimated_tokens = task.get("estimated_tokens")
+        if token_limit is not None and estimated_tokens is not None:
+            if estimated_tokens > token_limit:
+                errors.append(
+                    f"Estimated tokens ({estimated_tokens}) exceed token limit ({token_limit})"
+                )
+                field_errors.setdefault("tokens", []).append("limit_exceeded")
+
+        is_valid = len(errors) == 0
+        return ValidationResult(is_valid=is_valid, errors=errors, warnings=warnings, field_errors=field_errors)
 
     def validate_permissions(
         self, action: str, user_permissions: List[str]
     ) -> ValidationResult:
         """Validate action against permissions."""
-        pass
+        if not action:
+            return ValidationResult(
+                is_valid=False,
+                errors=["Action cannot be empty"],
+                warnings=[],
+                field_errors={"action": ["empty"]},
+            )
+        # Support wildcard permission
+        if "*" in user_permissions or action in user_permissions:
+            return ValidationResult(is_valid=True, errors=[], warnings=[], field_errors={})
+        # Support namespace prefix matching (e.g. "agents:*" grants "agents:read")
+        action_ns = action.split(":")[0]
+        if f"{action_ns}:*" in user_permissions:
+            return ValidationResult(is_valid=True, errors=[], warnings=[], field_errors={})
+        return ValidationResult(
+            is_valid=False,
+            errors=[f"Permission denied for action: '{action}'"],
+            warnings=[],
+            field_errors={"action": ["permission_denied"]},
+        )
 
     def validate_rate_limits(
         self, request_count: int, limit: int, period: str
     ) -> ValidationResult:
         """Validate against rate limits."""
-        pass
+        warnings: List[str] = []
+        if request_count > limit:
+            return ValidationResult(
+                is_valid=False,
+                errors=[
+                    f"Rate limit exceeded: {request_count} requests in {period} (limit {limit})"
+                ],
+                warnings=[],
+                field_errors={"rate_limit": ["exceeded"]},
+            )
+        # Warn when approaching the limit (>= 80%)
+        if limit > 0 and request_count / limit >= 0.8:
+            warnings.append(
+                f"Approaching rate limit: {request_count}/{limit} requests in {period}"
+            )
+        return ValidationResult(is_valid=True, errors=[], warnings=warnings, field_errors={})
 
     # ==================== Rule Management ====================
 
     def add_rule(self, entity_type: str, rule: ValidationRule) -> None:
         """Add a validation rule."""
-        pass
+        self._rules.setdefault(entity_type, []).append(rule)
 
     def remove_rule(self, entity_type: str, rule_name: str) -> bool:
         """Remove a validation rule."""
-        pass
+        rules = self._rules.get(entity_type, [])
+        original_len = len(rules)
+        self._rules[entity_type] = [r for r in rules if r.name != rule_name]
+        return len(self._rules[entity_type]) < original_len
 
     def get_rules(self, entity_type: str) -> List[ValidationRule]:
         """Get validation rules for entity type."""
-        pass
+        return self._rules.get(entity_type, [])
 
     def clear_rules(self, entity_type: Optional[str] = None) -> None:
         """Clear validation rules."""
-        pass
+        if entity_type is None:
+            self._rules.clear()
+        else:
+            self._rules.pop(entity_type, None)
 
     # ==================== Custom Validators ====================
 
     def register_validator(self, name: str, validator_func: Any) -> None:
         """Register a custom validator function."""
-        pass
+        if not callable(validator_func):
+            raise ValueError(f"Validator '{name}' must be callable")
+        self._custom_validators[name] = validator_func
 
     def unregister_validator(self, name: str) -> bool:
         """Unregister a custom validator."""
-        pass
+        if name in self._custom_validators:
+            del self._custom_validators[name]
+            return True
+        return False
 
     def run_custom_validator(self, name: str, value: Any, **kwargs) -> ValidationResult:
         """Run a custom validator."""
-        pass
+        validator_func = self._custom_validators.get(name)
+        if validator_func is None:
+            return ValidationResult(
+                is_valid=False,
+                errors=[f"Custom validator '{name}' is not registered"],
+                warnings=[],
+                field_errors={"validator": ["not_found"]},
+            )
+        return validator_func(value, **kwargs)
 
     # ==================== Batch Validation ====================
 
@@ -591,20 +879,62 @@ class Validator:
         self, items: List[Dict[str, Any]], validator_name: str
     ) -> List[ValidationResult]:
         """Validate a batch of items."""
-        pass
+        validator_func = self._custom_validators.get(validator_name)
+        if validator_func is None:
+            # Fall back to built-in task validation when no custom validator found
+            if validator_name == "task":
+                return [self.validate_task(item) for item in items]
+            return [
+                ValidationResult(
+                    is_valid=False,
+                    errors=[f"Validator '{validator_name}' is not registered"],
+                    warnings=[],
+                    field_errors={"validator": ["not_found"]},
+                )
+                for _ in items
+            ]
+        return [validator_func(item) for item in items]
 
     def validate_all(
         self, data: Dict[str, Any], rules: List[ValidationRule]
     ) -> ValidationResult:
         """Validate data against multiple rules."""
-        pass
+        all_errors: List[str] = []
+        all_warnings: List[str] = []
+        all_field_errors: Dict[str, List[str]] = {}
+
+        for rule in rules:
+            value = data.get(rule.field) if rule.field else data
+            validator_func = self._custom_validators.get(rule.validator)
+            if validator_func is None:
+                continue
+            result = validator_func(value, **rule.params)
+            if not result.is_valid:
+                if rule.level == ValidationLevel.STRICT or self.level == ValidationLevel.STRICT:
+                    all_errors.append(rule.message)
+                    if rule.field:
+                        all_field_errors.setdefault(rule.field, []).append(rule.message)
+                elif rule.level == ValidationLevel.LENIENT or self.level == ValidationLevel.LENIENT:
+                    all_warnings.append(rule.message)
+                else:
+                    all_errors.append(rule.message)
+                    if rule.field:
+                        all_field_errors.setdefault(rule.field, []).append(rule.message)
+            all_warnings.extend(result.warnings)
+
+        is_valid = len(all_errors) == 0
+        return ValidationResult(
+            is_valid=is_valid,
+            errors=all_errors,
+            warnings=all_warnings,
+            field_errors=all_field_errors,
+        )
 
     # ==================== Utilities ====================
 
     def set_level(self, level: ValidationLevel) -> None:
         """Set validation level."""
         self.level = level
-        pass
 
     def get_level(self) -> ValidationLevel:
         """Get current validation level."""

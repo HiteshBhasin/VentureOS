@@ -79,12 +79,12 @@ class BudgetManager:
 
     def set_all_limits(self, limits: Dict[str, float]) -> None:
         """Set multiple budget limits at once."""
-        limits["budget_type"] = limits.get("budget_type", BudgetLimit.limit)
         for key, value in limits.items():
-            if not isinstance(value, float) and key == "budget_type":
-                raise ValueError(f"{key} is not a valid budget type. must be Numeric")
-
-        # self._limits = limits <- @ TODO this needs to be looked at still
+            try:
+                budget_type = BudgetType(key)
+            except ValueError:
+                raise ValueError(f"'{key}' is not a valid BudgetType.")
+            self.set_budget_limit(budget_type, float(value))
 
     def get_all_limits(self) -> Dict[BudgetType, BudgetLimit]:
         """Get all budget limits."""
@@ -114,14 +114,16 @@ class BudgetManager:
 
     def record_cost(self, amount: float, source: str, description: str = "") -> None:
         """Record cost expenditure."""
-        if not hasattr(self, "cost"):
-            self.cost = {}
-
-        self.cost["amount"] = amount
-        self.cost["source"] = source
-        self.cost["description"] = description
-
-        self._usage_history.extend(self.cost)
+        entry = {
+            "type": "cost",
+            "amount": amount,
+            "source": source,
+            "description": description,
+            "timestamp": datetime.now().isoformat(),
+        }
+        self._usage_history.append(entry)
+        if BudgetType.COST in self._limits:
+            self._limits[BudgetType.COST].current_usage += amount
 
     def record_request(
         self, request_type: str, metadata: Optional[Dict] = None
@@ -153,8 +155,9 @@ class BudgetManager:
 
     def get_current_usage(self, budget_type: BudgetType) -> float:
         """Get current usage for a budget type."""
-        current_usage = self._usage_history[-1].get("budget_type", budget_type)
-        return current_usage
+        if budget_type in self._limits:
+            return self._limits[budget_type].current_usage
+        return 0.0
 
     def get_usage_history(
         self, budget_type: Optional[BudgetType] = None, limit: int = 100
@@ -168,8 +171,11 @@ class BudgetManager:
         """Check if amount is within budget."""
         if amount <= 0:
             raise ValueError("Amount must be positive.")
-        usage_amount = self._limits[budget_type].current_usage
-        return usage_amount >= amount
+        if budget_type not in self._limits:
+            return True  # No limit set, allow by default
+        limit = self._limits[budget_type]
+        remaining = limit.limit - limit.current_usage
+        return remaining >= amount
 
     def check_all_budgets(self) -> Dict[BudgetType, Any]:
         """Check all budgets."""
@@ -177,11 +183,17 @@ class BudgetManager:
 
     def has_budget_for_tokens(self, estimated_tokens: int) -> bool:
         """Check if token budget allows estimated usage."""
-        return self._limits[BudgetType.TOKENS].current_usage >= estimated_tokens
+        if BudgetType.TOKENS not in self._limits:
+            return True
+        limit = self._limits[BudgetType.TOKENS]
+        return (limit.limit - limit.current_usage) >= estimated_tokens
 
     def has_budget_for_cost(self, estimated_cost: float) -> bool:
         """Check if cost budget allows estimated expense."""
-        return self._limits[BudgetType.COST].current_usage >= estimated_cost
+        if BudgetType.COST not in self._limits:
+            return True
+        limit = self._limits[BudgetType.COST]
+        return (limit.limit - limit.current_usage) >= estimated_cost
 
     def has_budget_for_request(self) -> bool:
         """Check if request budget allows another request."""
@@ -209,45 +221,74 @@ class BudgetManager:
         """Enforce budget, raise exception if exceeded."""
         if amount <= 0:
             raise ValueError("Amount must be positive.")
-        self._limits[budget_type].current_usage += amount
+        if budget_type not in self._limits:
+            return
+        limit = self._limits[budget_type]
+        if limit.current_usage + amount > limit.limit:
+            from .exceptions import BudgetExceededError
+            raise BudgetExceededError(
+                f"Budget exceeded for {budget_type.value}: "
+                f"current={limit.current_usage}, requested={amount}, limit={limit.limit}"
+            )
+        limit.current_usage += amount
 
     def enforce_all_budgets(self) -> None:
         """Enforce all budgets."""
-        if self._limits:
-            self._limits = self._limits
+        for budget_type, limit in self._limits.items():
+            if limit.current_usage > limit.limit:
+                from .exceptions import BudgetExceededError
+                raise BudgetExceededError(
+                    f"Budget exceeded for {budget_type.value}: "
+                    f"current={limit.current_usage}, limit={limit.limit}"
+                )
 
     def reserve_budget(self, budget_type: BudgetType, amount: float) -> str:
         """Reserve budget for upcoming operation."""
         if amount <= 0:
             raise ValueError("Amount must be positive.")
-
-        reserved_budget = {}
-        reserved_budget["budget_type"] = budget_type
-        reserved_budget["amount"] = amount
-        time_stamp = datetime.now().isoformat()
-        reservation_id = f"{budget_type.value}_{time_stamp}"
+        import uuid
+        reservation_id = str(uuid.uuid4())
+        self._reservations[reservation_id] = {
+            "budget_type": budget_type,
+            "amount": amount,
+            "timestamp": datetime.now().isoformat(),
+        }
+        if budget_type in self._limits:
+            self._limits[budget_type].current_usage += amount
         return reservation_id
 
     def release_reservation(self, reservation_id: str) -> None:
         """Release a budget reservation."""
-        value = reservation_id.split("_")
-        budget_type = value[0]
-        amount = value[1]
-        if self._limits[BudgetType(budget_type)].current_usage >= float(amount):
-            self._limits[BudgetType(budget_type)].current_usage -= float(amount)
-            logging.info(
-                f"Released reservation {reservation_id}, amount: {amount} from {budget_type} budget."
+        reservation = self._reservations.pop(reservation_id, None)
+        if reservation is None:
+            logging.warning(f"Reservation {reservation_id} not found.")
+            return
+        budget_type = reservation["budget_type"]
+        amount = reservation["amount"]
+        if budget_type in self._limits:
+            self._limits[budget_type].current_usage = max(
+                0.0, self._limits[budget_type].current_usage - amount
             )
+        logging.info(
+            f"Released reservation {reservation_id}, amount: {amount} from {budget_type.value} budget."
+        )
 
     def commit_reservation(self, reservation_id: str, actual_amount: float) -> None:
         """Commit a reservation with actual usage."""
-        value = reservation_id.split("_")
-        budget_type = value[0]
-        if self._limits[BudgetType(budget_type)].current_usage >= actual_amount:
-            self._limits[BudgetType(budget_type)].current_usage += actual_amount
-            logging.info(
-                f"Committed reservation {reservation_id}, actual amount: {actual_amount} to {budget_type} budget."
-            )
+        reservation = self._reservations.pop(reservation_id, None)
+        if reservation is None:
+            logging.warning(f"Reservation {reservation_id} not found.")
+            return
+        budget_type = reservation["budget_type"]
+        reserved_amount = reservation["amount"]
+        if budget_type in self._limits:
+            # Adjust: remove reserved amount and add actual amount
+            self._limits[budget_type].current_usage = max(
+                0.0, self._limits[budget_type].current_usage - reserved_amount
+            ) + actual_amount
+        logging.info(
+            f"Committed reservation {reservation_id}, actual amount: {actual_amount} to {budget_type.value} budget."
+        )
 
     # ==================== Alerts ====================
 
@@ -282,19 +323,18 @@ class BudgetManager:
 
     def check_alerts(self) -> List[BudgetAlert]:
         """Check and trigger alerts."""
-        if self._alerts:
-            budget_list = []
-            for alert in self._alerts:
-                budget = self._limits.get(alert.budget_type)
-                budget_list.append(budget)
-                if budget and budget.limit > 0:
-                    usage_percent = (budget.current_usage / budget.limit) * 100
-                    if usage_percent >= alert.threshold_percent and not alert.triggered:
-                        alert.triggered = True
-                        logging.warning(
-                            f"Budget alert triggered: {alert.budget_type.value} usage at {usage_percent:.2f}%"
-                        )
-        return budget_list
+        triggered = []
+        for alert in self._alerts:
+            budget = self._limits.get(alert.budget_type)
+            if budget and budget.limit > 0:
+                usage_percent = (budget.current_usage / budget.limit) * 100
+                if usage_percent >= alert.threshold_percent and not alert.triggered:
+                    alert.triggered = True
+                    logging.warning(
+                        f"Budget alert triggered: {alert.budget_type.value} usage at {usage_percent:.2f}%"
+                    )
+                    triggered.append(alert)
+        return triggered
 
     def get_alerts(self) -> List[BudgetAlert]:
         """Get all configured alerts."""
