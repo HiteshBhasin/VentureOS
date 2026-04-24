@@ -50,8 +50,27 @@ class TaskGraph:
 
     # ==================== Node Management ====================
 
-    def add_task(self, task: TaskNode) -> None:
-        """Add a task to the graph."""
+    def add_task(self, task_or_id, task_data: Optional[Dict[str, Any]] = None) -> None:
+        """Add a task to the graph.
+
+        Accepts either a TaskNode object or (task_id, task_data_dict).
+        """
+        if isinstance(task_or_id, TaskNode):
+            task = task_or_id
+        else:
+            task_id = task_or_id
+            data = task_data or {}
+            task = TaskNode(
+                task_id=task_id,
+                name=data.get("name", task_id),
+                description=data.get("description", ""),
+                dependencies=data.get("dependencies", []),
+                metadata={
+                    k: v
+                    for k, v in data.items()
+                    if k not in ("name", "description", "dependencies")
+                },
+            )
         self._nodes[task.task_id] = task
         self._adjacency.setdefault(task.task_id, set())
         self._reverse_adjacency.setdefault(task.task_id, set())
@@ -104,9 +123,11 @@ class TaskGraph:
             return False
         if dependency_id in self._reverse_adjacency.get(task_id, set()):
             return False  # Already exists
-        # Prevent cycles: dependency_id must not be downstream of task_id
-        if task_id in self.get_all_downstream(dependency_id):
-            return False
+        # Prevent cycles: dependency_id must not already be downstream of task_id
+        if dependency_id in self.get_all_downstream(task_id):
+            raise ValueError(
+                f"Adding dependency '{dependency_id}' → '{task_id}' would create a cycle"
+            )
         self._reverse_adjacency.setdefault(task_id, set()).add(dependency_id)
         self._adjacency.setdefault(dependency_id, set()).add(task_id)
         if dependency_id not in self._nodes[task_id].dependencies:
@@ -167,8 +188,7 @@ class TaskGraph:
     def topological_sort(self) -> List[str]:
         """Return tasks in topological order."""
         in_degree = {
-            tid: len(self._reverse_adjacency.get(tid, set()))
-            for tid in self._nodes
+            tid: len(self._reverse_adjacency.get(tid, set())) for tid in self._nodes
         }
         queue = [tid for tid, d in in_degree.items() if d == 0]
         queue.sort()  # Deterministic ordering
@@ -348,16 +368,12 @@ class TaskGraph:
     def get_leaf_tasks(self) -> List[TaskNode]:
         """Get tasks with no dependencies (can run immediately)."""
         return [
-            t for tid, t in self._nodes.items()
-            if not self._reverse_adjacency.get(tid)
+            t for tid, t in self._nodes.items() if not self._reverse_adjacency.get(tid)
         ]
 
     def get_root_tasks(self) -> List[TaskNode]:
         """Get tasks with no dependents (terminal/final tasks)."""
-        return [
-            t for tid, t in self._nodes.items()
-            if not self._adjacency.get(tid)
-        ]
+        return [t for tid, t in self._nodes.items() if not self._adjacency.get(tid)]
 
     def get_pending_count(self) -> int:
         """Get count of pending tasks."""
@@ -390,8 +406,7 @@ class TaskGraph:
     def is_complete(self) -> bool:
         """Check if all tasks are completed."""
         return all(
-            t.status
-            in (TaskStatus.COMPLETED, TaskStatus.SKIPPED, TaskStatus.CANCELLED)
+            t.status in (TaskStatus.COMPLETED, TaskStatus.SKIPPED, TaskStatus.CANCELLED)
             for t in self._nodes.values()
         )
 
@@ -416,7 +431,9 @@ class TaskGraph:
                     "error": t.error,
                     "created_at": t.created_at.isoformat(),
                     "started_at": t.started_at.isoformat() if t.started_at else None,
-                    "completed_at": t.completed_at.isoformat() if t.completed_at else None,
+                    "completed_at": (
+                        t.completed_at.isoformat() if t.completed_at else None
+                    ),
                     "metadata": t.metadata,
                 }
                 for tid, t in self._nodes.items()
@@ -533,8 +550,7 @@ class TaskGraph:
     def remove_completed(self) -> int:
         """Remove completed tasks. Returns count removed."""
         completed_ids = [
-            tid for tid, t in self._nodes.items()
-            if t.status == TaskStatus.COMPLETED
+            tid for tid, t in self._nodes.items() if t.status == TaskStatus.COMPLETED
         ]
         for tid in completed_ids:
             self.remove_task(tid)

@@ -33,7 +33,11 @@ class StateMachine:
 
     # Valid state transitions
     VALID_TRANSITIONS: Dict[AgentState, Set[AgentState]] = {
-        AgentState.IDLE: {AgentState.INITIALIZING, AgentState.STOPPED},
+        AgentState.IDLE: {
+            AgentState.INITIALIZING,
+            AgentState.RUNNING,
+            AgentState.STOPPED,
+        },
         AgentState.INITIALIZING: {
             AgentState.RUNNING,
             AgentState.FAILED,

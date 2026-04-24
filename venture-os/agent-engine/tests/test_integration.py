@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 from datetime import datetime
 
 # ── core ──────────────────────────────────────────────────────────────────────
+
 from core.budget_manager import BudgetManager, BudgetType
 from core.events import EventBus, EventEmitter, EventType, Event
 from core.task_graph import TaskGraph
