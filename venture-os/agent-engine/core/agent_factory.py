@@ -4,7 +4,7 @@ import logging
 import uuid
 import time
 import asyncio 
-from ..agents.base_agent import BaseAgent
+from agents.base_agent import BaseAgent
 
 logger = logging.getLogger(__name__)
 

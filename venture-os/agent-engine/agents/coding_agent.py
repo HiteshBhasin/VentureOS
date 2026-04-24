@@ -22,8 +22,6 @@ class CodingAgent(BaseAgent):
 
     def execute_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a coding task (generation, debugging, refactoring)."""
-<<<<<<< HEAD
-=======
         task_type = task.get("type")
         if task_type == "generate_code":
             result = self.generate_code(
@@ -71,7 +69,6 @@ class CodingAgent(BaseAgent):
             return {"status": "success", "type": "refactor_code", "code": result}
         else:
             return {"error": f"Unsupported task type: {task_type}"}
->>>>>>> 6e6b98817b561ae32763225835055533839a200d
 
     # ==================== Code Generation ====================
 
