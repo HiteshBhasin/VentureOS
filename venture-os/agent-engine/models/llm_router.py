@@ -70,31 +70,50 @@ class LLMRouter:
 
     def register_endpoint(self, endpoint: ModelEndpoint) -> bool:
         """Register a model endpoint."""
-        pass
+        if endpoint.name in self._endpoints:
+            return False  # Endpoint with this name already exists
+        self._endpoints[endpoint.name] = endpoint
+        return True
 
     def unregister_endpoint(self, name: str) -> bool:
         """Unregister an endpoint."""
-        pass
+        if name in self._endpoints:
+            del self._endpoints[name]
+            return True
+        return False
 
     def update_endpoint(self, name: str, updates: Dict[str, Any]) -> bool:
         """Update endpoint configuration."""
-        pass
+        if name not in self._endpoints:
+            return False
+        for key, value in updates.items():
+            if hasattr(self._endpoints[name], key):
+                setattr(self._endpoints[name], key, value)
+        return True
 
     def get_endpoint(self, name: str) -> Optional[ModelEndpoint]:
         """Get endpoint by name."""
-        pass
+        return self._endpoints.get(name)
 
     def list_endpoints(self, enabled_only: bool = True) -> List[ModelEndpoint]:
         """List all endpoints."""
-        pass
+        if enabled_only:
+            return [ep for ep in self._endpoints.values() if ep.enabled]
+        return list(self._endpoints.values())
 
     def enable_endpoint(self, name: str) -> bool:
         """Enable an endpoint."""
-        pass
+        if name in self._endpoints:
+            self._endpoints[name].enabled = True
+            return True
+        return False
 
     def disable_endpoint(self, name: str) -> bool:
         """Disable an endpoint."""
-        pass
+        if name in self._endpoints:
+            self._endpoints[name].enabled = False
+            return True
+        return False
 
     # ==================== Routing ====================
 
