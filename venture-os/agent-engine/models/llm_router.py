@@ -1,4 +1,5 @@
 # Multi-model routing (GPT/Claude/Local)
+import random
 from typing import Any, Dict, List, Optional, Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -44,6 +45,7 @@ class ModelEndpoint:
     cost_per_1k_output: float = 0.0
     latency_ms: float = 0.0
     weight: float = 1.0
+    max_context_length: int = 4096
     enabled: bool = True
     rate_limit: Optional[int] = None
 
@@ -65,6 +67,7 @@ class LLMRouter:
         self._endpoints: Dict[str, ModelEndpoint] = {}
         self._strategy: RoutingStrategy = RoutingStrategy.COST_OPTIMIZED
         self._fallback_chain: List[str] = []
+        self._round_robin_index: int = 0
 
     # ==================== Endpoint Management ====================
 
@@ -119,53 +122,211 @@ class LLMRouter:
 
     def route(self, request: Dict[str, Any]) -> RoutingDecision:
         """Route request to appropriate endpoint."""
-        pass
+        available = [ep for ep in self._endpoints.values() if ep.enabled]
+        if not available:
+            raise ValueError("No enabled endpoints available")
+
+        strategy = self._strategy
+
+        # For capability-based routing, pre-filter by the requested capability
+        if strategy == RoutingStrategy.CAPABILITY_BASED:
+            capability = request.get("capability")
+            if capability:
+                capable = [ep for ep in available if capability in ep.capabilities]
+                if capable:
+                    available = capable
+
+        if strategy == RoutingStrategy.COST_OPTIMIZED:
+            endpoint = min(
+                available, key=lambda ep: ep.cost_per_1k_input + ep.cost_per_1k_output
+            )
+            reason = "cost_optimized"
+
+        elif strategy == RoutingStrategy.QUALITY_OPTIMIZED:
+            # Use number of capabilities as a quality proxy; higher cost as tiebreaker
+            endpoint = max(
+                available, key=lambda ep: (len(ep.capabilities), ep.cost_per_1k_input)
+            )
+            reason = "quality_optimized"
+
+        elif strategy == RoutingStrategy.SPEED_OPTIMIZED:
+            endpoint = min(available, key=lambda ep: ep.latency_ms)
+            reason = "speed_optimized"
+
+        elif strategy == RoutingStrategy.ROUND_ROBIN:
+            endpoint = available[self._round_robin_index % len(available)]
+            self._round_robin_index += 1
+            reason = "round_robin"
+
+        elif strategy == RoutingStrategy.WEIGHTED:
+            weights = [ep.weight for ep in available]
+            endpoint = random.choices(available, weights=weights, k=1)[0]
+            reason = "weighted"
+
+        elif strategy == RoutingStrategy.FALLBACK:
+            endpoint = next(
+                (
+                    self._endpoints[name]
+                    for name in self._fallback_chain
+                    if name in self._endpoints and self._endpoints[name].enabled
+                ),
+                available[0],
+            )
+            reason = "fallback"
+
+        else:  # CAPABILITY_BASED after pre-filter, or unknown strategy
+            endpoint = available[0]
+            reason = strategy.value
+
+        fallbacks = [ep for ep in available if ep.name != endpoint.name]
+        return RoutingDecision(
+            endpoint=endpoint, reason=reason, fallback_endpoints=fallbacks
+        )
 
     def route_by_capability(self, capability: ModelCapability) -> RoutingDecision:
         """Route by required capability."""
-        pass
+        available = [ep for ep in self._endpoints.values() if ep.enabled]
+        if not available:
+            raise ValueError("No enabled endpoints available")
+
+        capable = [ep for ep in available if capability in ep.capabilities]
+        if not capable:
+            raise ValueError(f"No endpoints available with capability: {capability}")
+
+        endpoint = capable[0]
+        fallbacks = [ep for ep in capable if ep.name != endpoint.name]
+        return RoutingDecision(
+            endpoint=endpoint, reason="capability_based", fallback_endpoints=fallbacks
+        )
 
     def route_by_cost(self, max_cost: float) -> RoutingDecision:
         """Route to cheapest endpoint under cost limit."""
-        pass
+        available = [ep for ep in self._endpoints.values() if ep.enabled]
+        if not available:
+            raise ValueError("No enabled endpoints available")
+
+        affordable = [
+            ep
+            for ep in available
+            if (ep.cost_per_1k_input + ep.cost_per_1k_output) <= max_cost
+        ]
+        if not affordable:
+            raise ValueError(f"No endpoints available under cost: {max_cost}")
+
+        endpoint = min(
+            affordable, key=lambda ep: ep.cost_per_1k_input + ep.cost_per_1k_output
+        )
+        fallbacks = [ep for ep in affordable if ep.name != endpoint.name]
+        return RoutingDecision(
+            endpoint=endpoint, reason="cost_based", fallback_endpoints=fallbacks
+        )
 
     def route_by_latency(self, max_latency_ms: float) -> RoutingDecision:
         """Route to fastest endpoint under latency limit."""
-        pass
+        available = [ep for ep in self._endpoints.values() if ep.enabled]
+        if not available:
+            raise ValueError("No enabled endpoints available")
+
+        fast = [ep for ep in available if ep.latency_ms <= max_latency_ms]
+        if not fast:
+            raise ValueError(
+                f"No endpoints available under latency: {max_latency_ms} ms"
+            )
+
+        endpoint = min(fast, key=lambda ep: ep.latency_ms)
+        fallbacks = [ep for ep in fast if ep.name != endpoint.name]
+        return RoutingDecision(
+            endpoint=endpoint, reason="latency_based", fallback_endpoints=fallbacks
+        )
 
     def route_by_context_length(self, token_count: int) -> RoutingDecision:
         """Route to endpoint supporting context length."""
-        pass
+        available = [ep for ep in self._endpoints.values() if ep.enabled]
+        if not available:
+            raise ValueError("No enabled endpoints available")
+
+        suitable = [ep for ep in available if ep.max_context_length >= token_count]
+        if not suitable:
+            raise ValueError(
+                f"No endpoints available for context length: {token_count}"
+            )
+
+        endpoint = min(suitable, key=lambda ep: ep.max_context_length)
+        fallbacks = [ep for ep in suitable if ep.name != endpoint.name]
+        return RoutingDecision(
+            endpoint=endpoint,
+            reason="context_length_based",
+            fallback_endpoints=fallbacks,
+        )
 
     def route_round_robin(self) -> RoutingDecision:
         """Route using round-robin."""
-        pass
+        available = [ep for ep in self._endpoints.values() if ep.enabled]
+        if not available:
+            raise ValueError("No enabled endpoints available")
+
+        endpoint = available[self._round_robin_index % len(available)]
+        self._round_robin_index += 1
+
+        fallbacks = [ep for ep in available if ep.name != endpoint.name]
+        return RoutingDecision(
+            endpoint=endpoint, reason="round_robin", fallback_endpoints=fallbacks
+        )
 
     def route_weighted(self) -> RoutingDecision:
         """Route using weighted random."""
-        pass
+        available = [ep for ep in self._endpoints.values() if ep.enabled]
+        if not available:
+            raise ValueError("No enabled endpoints available")
+
+        total_weight = sum(ep.weight for ep in available)
+        if total_weight == 0:
+            raise ValueError("No endpoints with positive weight available")
+
+        choice = random.uniform(0, total_weight)
+        cumulative_weight = 0
+        for ep in available:
+            cumulative_weight += ep.weight
+            if choice <= cumulative_weight:
+                endpoint = ep
+                break
+
+        fallbacks = [ep for ep in available if ep.name != endpoint.name]
+        return RoutingDecision(
+            endpoint=endpoint, reason="weighted_random", fallback_endpoints=fallbacks
+        )
 
     # ==================== Strategy Management ====================
 
     def set_strategy(self, strategy: RoutingStrategy) -> None:
         """Set routing strategy."""
-        pass
+        if strategy not in RoutingStrategy:
+            raise ValueError(f"Invalid routing strategy: {strategy}")
+
+        self._strategy = strategy
 
     def get_strategy(self) -> RoutingStrategy:
         """Get current strategy."""
-        pass
+        return self._strategy
 
     def set_fallback_chain(self, endpoint_names: List[str]) -> None:
         """Set fallback chain."""
-        pass
+        for name in endpoint_names:
+            if name not in self._endpoints:
+                raise ValueError(f"Endpoint not found for fallback: {name}")
+        self._fallback_chain = endpoint_names
 
     def get_fallback_chain(self) -> List[str]:
         """Get fallback chain."""
-        pass
+        return self._fallback_chain
 
     def add_custom_strategy(self, name: str, strategy_func: Callable) -> None:
         """Add custom routing strategy."""
-        pass
+        if hasattr(
+            self, f"_custom_strategy_{name}"
+        ):  # this is checking is the strategy already exists, if it does it raises an error to avoid overwriting existing strategies
+            raise ValueError(f"Custom strategy already exists: {name}")
+        setattr(self, f"_custom_strategy_{name}", strategy_func)
 
     # ==================== Capability Matching ====================
 
@@ -173,27 +334,54 @@ class LLMRouter:
         self, capability: ModelCapability
     ) -> List[ModelEndpoint]:
         """Get endpoints with specific capability."""
-        pass
+        return [ep for ep in self._endpoints.values() if capability in ep.capabilities]
 
     def get_endpoints_by_provider(self, provider: str) -> List[ModelEndpoint]:
         """Get endpoints by provider."""
-        pass
+        return [ep for ep in self._endpoints.values() if ep.provider == provider]
 
     def get_best_for_task(self, task_type: str) -> Optional[ModelEndpoint]:
         """Get best endpoint for task type."""
-        pass
+        if task_type == "code_generation":
+            return self.route_by_capability(ModelCapability.CODE_GENERATION).endpoint
+        elif task_type == "reasoning":
+            return self.route_by_capability(ModelCapability.REASONING).endpoint
+        elif task_type == "creative_writing":
+            return self.route_by_capability(ModelCapability.CREATIVE_WRITING).endpoint
+        elif task_type == "summarization":
+            return self.route_by_capability(ModelCapability.SUMMARIZATION).endpoint
+        elif task_type == "translation":
+            return self.route_by_capability(ModelCapability.TRANSLATION).endpoint
+        elif task_type == "vision":
+            return self.route_by_capability(ModelCapability.VISION).endpoint
+        elif task_type == "tool_use":
+            return self.route_by_capability(ModelCapability.TOOL_USE).endpoint
+        elif task_type == "long_context":
+            return self.route_by_capability(ModelCapability.LONG_CONTEXT).endpoint
+        else:
+            return None
 
     def supports_capability(
         self, endpoint_name: str, capability: ModelCapability
     ) -> bool:
         """Check if endpoint supports capability."""
-        pass
+        for ep in self._endpoints.values():
+            if ep.name == endpoint_name:
+                return capability in ep.capabilities
+        return False
 
     # ==================== Load Balancing ====================
 
     def get_endpoint_load(self, name: str) -> Dict[str, Any]:
         """Get endpoint load metrics."""
-        pass
+        for ep in self._endpoints.values():
+            if ep.name == name:
+                return {
+                    "active_requests": 0,  # Placeholder for active request count
+                    "queue_length": 0,  # Placeholder for queue length
+                    "latency_ms": ep.latency_ms,
+                }
+        raise ValueError(f"Endpoint not found: {name}")
 
     def set_endpoint_weight(self, name: str, weight: float) -> None:
         """Set endpoint weight for load balancing."""
