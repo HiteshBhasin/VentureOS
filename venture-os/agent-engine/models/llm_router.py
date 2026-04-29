@@ -385,11 +385,33 @@ class LLMRouter:
 
     def set_endpoint_weight(self, name: str, weight: float) -> None:
         """Set endpoint weight for load balancing."""
-        pass
+        for ep in self._endpoints.values():
+            if ep.name == name:
+                ep.weight = weight
+                return
+        raise ValueError(f"Endpoint not found: {name}")
 
     def rebalance_weights(self) -> None:
-        """Rebalance weights based on performance."""
-        pass
+        """Rebalance weights based on performance (inverse latency)."""
+        endpoints = [ep for ep in self._endpoints.values() if ep.enabled]
+        if not endpoints:
+            return
+
+        # Score = 1 / latency_ms; endpoints with latency=0 get max score
+        scores = [
+            1.0 / ep.latency_ms if ep.latency_ms > 0 else float("inf")
+            for ep in endpoints
+        ]
+
+        # If any endpoint has infinite score, give it weight=1.0 and others weight=0.0
+        if any(s == float("inf") for s in scores):
+            for ep, score in zip(endpoints, scores):
+                ep.weight = 1.0 if score == float("inf") else 0.0
+            return
+
+        total = sum(scores)
+        for ep, score in zip(endpoints, scores):
+            ep.weight = score / total
 
     def get_health_status(self, name: str) -> Dict[str, Any]:
         """Get endpoint health status."""
