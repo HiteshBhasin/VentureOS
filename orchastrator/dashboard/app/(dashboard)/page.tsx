@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useCallback } from 'react';
 import { useAgents } from '@/hooks/useAgents';
 import { useSystemStatus } from '@/hooks/useSystemStatus';
 import { useSystemStream } from '@/hooks/useSystemStream';
@@ -96,6 +97,25 @@ export default function DashboardPage() {
   const { logs } = useSystemStream();
   const { goal } = useActiveGoal();
 
+  const [objective, setObjective] = useState('');
+  const [submitted, setSubmitted] = useState<string | null>(null);
+
+  const handleExecute = useCallback(() => {
+    const trimmed = objective.trim();
+    if (!trimmed) return;
+    setSubmitted(trimmed);
+    // TODO: send to backend when ready
+  }, [objective]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') handleExecute();
+  }, [handleExecute]);
+
+  const handleClear = useCallback(() => {
+    setObjective('');
+    setSubmitted(null);
+  }, []);
+
   const displayLogs = logs.length > 0 ? logs.map(parseLog) : [
     { time: '14:20:01', tag: 'OK',    tagColor: 'text-emerald-400', text: 'COMMAND RECEIVED: INIT_MARKETING_STRAT_V2' },
     { time: '14:20:02', tag: 'PROC',  tagColor: 'text-cyan-400',    text: 'ANALYZING OBJECTIVE...' },
@@ -123,25 +143,38 @@ export default function DashboardPage() {
     <div className="flex flex-col h-full bg-[#080c18] text-zinc-300 font-mono p-4 gap-4">
 
       {/* Goal Banner */}
-      <div className="rounded border border-cyan-500/30 bg-cyan-500/5 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <div className="rounded border border-cyan-500/30 bg-cyan-500/5 px-4 py-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 flex-1 min-w-0">
           <svg className="h-4 w-4 text-cyan-400 shrink-0 animate-spin [animation-duration:3s]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
-          <label htmlFor="user-query">
+          <label htmlFor="user-query" className="shrink-0">
             <span className="text-[10px] tracking-widest uppercase text-cyan-400">Enter Objective:</span>
           </label>
           <input
             type="text"
             name="user-query"
             id="user-query"
-            defaultValue={goal.title || ''}
-            className="bg-zinc-800 text-zinc-300 text-[10px] tracking-widest uppercase border border-cyan-500/30 rounded px-100 py-2"
+            value={objective}
+            onChange={(e) => setObjective(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={goal.title || 'Describe your goal...'}
+            className="flex-1 min-w-0 bg-transparent text-zinc-200 text-[11px] tracking-wider border-b border-cyan-500/30 focus:border-cyan-400 outline-none py-1 placeholder:text-zinc-600 placeholder:tracking-widest placeholder:uppercase transition-colors"
           />
         </div>
         <div className="flex items-center gap-3 shrink-0">
-          <button className="rounded border border-cyan-500/40 bg-cyan-500/10 text-cyan-400 text-[10px] font-bold tracking-widest px-10 py-2 uppercase">Execute</button>
-          <button aria-label="Stop task" className="text-zinc-500 hover:text-red-400 transition-colors">
+          <button
+            onClick={handleExecute}
+            disabled={!objective.trim()}
+            className="rounded border border-cyan-500/40 bg-cyan-500/10 text-cyan-400 text-[10px] font-bold tracking-widest px-4 py-2 uppercase hover:bg-cyan-500/20 hover:border-cyan-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            Execute
+          </button>
+          <button
+            aria-label="Clear objective"
+            onClick={handleClear}
+            className="text-zinc-500 hover:text-red-400 transition-colors"
+          >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -149,10 +182,18 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Submitted objective feedback */}
+      {submitted && (
+        <div className="flex items-center gap-2 px-1 -mt-2">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+          <span className="text-[10px] text-emerald-400 tracking-widest uppercase">OBJECTIVE SET: {submitted}</span>
+        </div>
+      )}
+
       {/* PID row */}
       <div className="flex items-center justify-between px-1 -mt-2">
         <span className="text-[10px] text-zinc-600 tracking-widest">PID: {pid} &nbsp; MEMORY: {memUsed}GB / {memTotal}GB</span>
-        <span className="text-[10px] text-zinc-600 tracking-widest">Processing metadata hooks...</span>
+        <span className="text-[10px] text-zinc-600 tracking-widest">{submitted ? `EXECUTING: ${submitted}` : 'Awaiting objective...'}</span>
       </div>
 
       {/* Main content row */}
