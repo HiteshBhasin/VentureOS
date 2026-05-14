@@ -57,33 +57,374 @@ class CodeExecutor:
         timeout: int = 30,
     ) -> CodeExecutionResult:
         """Execute code in specified language."""
-        pass
+        if language not in Language:
+            return CodeExecutionResult(
+                success=False,
+                output="",
+                error=f"Unsupported language: {language}",
+            )
+        if language == Language.PYTHON:
+            return self.execute_python(code, inputs, timeout)
+        elif language == Language.JAVASCRIPT:
+            return self.execute_javascript(code, inputs, timeout)
+        elif language == Language.BASH:
+            return self.execute_bash(code, timeout)
+        elif language == Language.SQL:
+            connection_string = self.config.get("sql_connection_string", "")
+            return self.execute_sql(code, connection_string)
+        else:
+            return CodeExecutionResult(
+                success=False,
+                output="",
+                error=f"Execution for language {language} not implemented",
+            )
 
     def execute_python(
         self, code: str, inputs: Optional[Dict] = None, timeout: int = 30
     ) -> CodeExecutionResult:
-        """Execute Python code."""
-        pass
+        """Execute Python code safely in a restricted sandboxed environment."""
+        import io
+        import time
+        import traceback
+        import contextlib
+        import threading
+
+        inputs = inputs or {}
+
+        # Allowlist of safe builtins — excludes __import__, open, eval, exec, compile, etc.
+        _safe_builtin_names = [
+            "abs",
+            "all",
+            "any",
+            "bin",
+            "bool",
+            "bytes",
+            "callable",
+            "chr",
+            "complex",
+            "dict",
+            "dir",
+            "divmod",
+            "enumerate",
+            "filter",
+            "float",
+            "format",
+            "frozenset",
+            "getattr",
+            "hasattr",
+            "hash",
+            "hex",
+            "id",
+            "int",
+            "isinstance",
+            "issubclass",
+            "iter",
+            "len",
+            "list",
+            "map",
+            "max",
+            "min",
+            "next",
+            "object",
+            "oct",
+            "ord",
+            "pow",
+            "print",
+            "property",
+            "range",
+            "repr",
+            "reversed",
+            "round",
+            "set",
+            "setattr",
+            "slice",
+            "sorted",
+            "staticmethod",
+            "str",
+            "sum",
+            "super",
+            "tuple",
+            "type",
+            "vars",
+            "zip",
+            "True",
+            "False",
+            "None",
+            "Exception",
+            "ValueError",
+            "TypeError",
+            "KeyError",
+            "IndexError",
+            "AttributeError",
+            "RuntimeError",
+            "StopIteration",
+            "NotImplementedError",
+            "OverflowError",
+            "ZeroDivisionError",
+        ]
+        import builtins as _builtins_module
+
+        safe_builtins = {
+            name: getattr(_builtins_module, name)
+            for name in _safe_builtin_names
+            if hasattr(_builtins_module, name)
+        }
+
+        stdout_capture = io.StringIO()
+        stderr_capture = io.StringIO()
+
+        exec_globals: Dict[str, Any] = {
+            "__builtins__": safe_builtins,
+            "__name__": "__main__",
+        }
+        exec_locals: Dict[str, Any] = dict(inputs)
+        container: Dict[str, Any] = {"return_value": None, "error": None, "tb": None}
+
+        def _run() -> None:
+            try:
+                compiled = compile(code, "<ventureos_exec>", "exec")
+                with contextlib.redirect_stdout(
+                    stdout_capture
+                ), contextlib.redirect_stderr(stderr_capture):
+                    exec(compiled, exec_globals, exec_locals)  # noqa: S102
+                container["return_value"] = exec_locals.get("result")
+            except Exception as exc:
+                container["error"] = exc
+                container["tb"] = traceback.format_exc()
+
+        start = time.perf_counter()
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+        thread.join(timeout=timeout)
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+
+        if thread.is_alive():
+            return CodeExecutionResult(
+                success=False,
+                output=stdout_capture.getvalue(),
+                error=f"Execution timed out after {timeout}s",
+                execution_time_ms=elapsed_ms,
+            )
+
+        if container["error"] is not None:
+            return CodeExecutionResult(
+                success=False,
+                output=stdout_capture.getvalue(),
+                error=container["tb"] or str(container["error"]),
+                execution_time_ms=elapsed_ms,
+            )
+
+        err_output = stderr_capture.getvalue()
+        execution_result = CodeExecutionResult(
+            success=True,
+            output=stdout_capture.getvalue(),
+            error=err_output if err_output else None,
+            return_value=container["return_value"],
+            execution_time_ms=elapsed_ms,
+        )
+        self._execution_history.append(execution_result)
+        return execution_result
 
     def execute_javascript(
         self, code: str, inputs: Optional[Dict] = None, timeout: int = 30
     ) -> CodeExecutionResult:
-        """Execute JavaScript code."""
-        pass
+        """Execute JavaScript code via Node.js subprocess."""
+        import json
+        import subprocess
+        import tempfile
+        import time
+        import os
+
+        inputs = inputs or {}
+
+        # Inject inputs as a JSON-parsed variable and wrap user code
+        inputs_json = json.dumps(inputs)
+        wrapped_code = (
+            f"const inputs = {inputs_json};\n"
+            "const _originalLog = console.log;\n"
+            "const _output = [];\n"
+            "console.log = (...args) => _output.push(args.map(String).join(' '));\n"
+            f"{code}\n"
+            "process.stdout.write(_output.join('\\n'));\n"
+        )
+
+        # Write to a temp file so Node gets a real script path
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".js", delete=False, encoding="utf-8"
+        )
+        try:
+            tmp.write(wrapped_code)
+            tmp.flush()
+            tmp.close()
+
+            start = time.perf_counter()
+            try:
+                proc = subprocess.run(  # noqa: S603
+                    ["node", tmp.name],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+            except FileNotFoundError:
+                return CodeExecutionResult(
+                    success=False,
+                    output="",
+                    error="Node.js is not installed or not on PATH",
+                )
+            except subprocess.TimeoutExpired:
+                elapsed_ms = (time.perf_counter() - start) * 1000.0
+                return CodeExecutionResult(
+                    success=False,
+                    output="",
+                    error=f"Execution timed out after {timeout}s",
+                    execution_time_ms=elapsed_ms,
+                )
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+        finally:
+            os.unlink(tmp.name)
+
+        if proc.returncode != 0:
+            return CodeExecutionResult(
+                success=False,
+                output=proc.stdout,
+                error=proc.stderr,
+                execution_time_ms=elapsed_ms,
+            )
+
+        execution_result = CodeExecutionResult(
+            success=True,
+            output=proc.stdout,
+            error=proc.stderr if proc.stderr else None,
+            execution_time_ms=elapsed_ms,
+        )
+        self._execution_history.append(execution_result)
+        return execution_result
 
     def execute_bash(self, script: str, timeout: int = 30) -> CodeExecutionResult:
-        """Execute Bash script."""
-        pass
+        """Execute Bash script via subprocess."""
+        import subprocess
+        import tempfile
+        import time
+        import os
+        import shutil
+
+        bash_bin = shutil.which("bash")
+        if bash_bin is None:
+            return CodeExecutionResult(
+                success=False,
+                output="",
+                error="bash is not installed or not on PATH",
+            )
+
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".sh", delete=False, encoding="utf-8"
+        )
+        try:
+            tmp.write(script)
+            tmp.flush()
+            tmp.close()
+            os.chmod(tmp.name, 0o700)
+
+            start = time.perf_counter()
+            try:
+                proc = subprocess.run(  # noqa: S603
+                    [bash_bin, tmp.name],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired:
+                elapsed_ms = (time.perf_counter() - start) * 1000.0
+                return CodeExecutionResult(
+                    success=False,
+                    output="",
+                    error=f"Execution timed out after {timeout}s",
+                    execution_time_ms=elapsed_ms,
+                )
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+        finally:
+            os.unlink(tmp.name)
+
+        if proc.returncode != 0:
+            return CodeExecutionResult(
+                success=False,
+                output=proc.stdout,
+                error=proc.stderr,
+                execution_time_ms=elapsed_ms,
+            )
+
+        execution_result = CodeExecutionResult(
+            success=True,
+            output=proc.stdout,
+            error=proc.stderr if proc.stderr else None,
+            execution_time_ms=elapsed_ms,
+        )
+        self._execution_history.append(execution_result)
+        return execution_result
 
     def execute_sql(self, query: str, connection_string: str) -> CodeExecutionResult:
-        """Execute SQL query."""
-        pass
+        """Execute SQL query via SQLAlchemy (supports PostgreSQL, MySQL, SQLite, etc.)."""
+        import time
+
+        if not connection_string:
+            return CodeExecutionResult(
+                success=False,
+                output="",
+                error="connection_string is required",
+            )
+
+        try:
+            from sqlalchemy import create_engine, text  # noqa: PLC0415
+        except ImportError:
+            return CodeExecutionResult(
+                success=False,
+                output="",
+                error="sqlalchemy is not installed; run: pip install sqlalchemy",
+            )
+
+        try:
+            engine = create_engine(connection_string)
+            start = time.perf_counter()
+            with engine.connect() as conn:
+                result_proxy = conn.execute(text(query))
+                elapsed_ms = (time.perf_counter() - start) * 1000.0
+                try:
+                    rows = result_proxy.fetchall()
+                    columns = list(result_proxy.keys())
+                    return_value = [dict(zip(columns, row)) for row in rows]
+                    output = "\n".join(str(dict(zip(columns, row))) for row in rows)
+                except Exception:
+                    # DML/DDL statements (INSERT, UPDATE, CREATE, …) return no rows
+                    conn.commit()
+                    return_value = None
+                    output = f"Query executed successfully. Rows affected: {result_proxy.rowcount}"
+        except Exception as exc:
+            elapsed_ms = (
+                (time.perf_counter() - start) * 1000.0 if "start" in dir() else 0.0
+            )
+            return CodeExecutionResult(
+                success=False,
+                output="",
+                error=str(exc),
+                execution_time_ms=elapsed_ms,
+            )
+
+        execution_result = CodeExecutionResult(
+            success=True,
+            output=output,
+            return_value=return_value,
+            execution_time_ms=elapsed_ms,
+        )
+        self._execution_history.append(execution_result)
+        return execution_result
 
     def execute_file(
         self, filepath: str, language: Language, args: Optional[List[str]] = None
     ) -> CodeExecutionResult:
         """Execute code from file."""
-        pass
+        with open(filepath, "r") as f:
+            code = f.read()
+        return self.execute(code, language, inputs={"args": args or []})
 
     # ==================== Environment Management ====================
 
