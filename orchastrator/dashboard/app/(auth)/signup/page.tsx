@@ -1,1 +1,8 @@
-export default function SignupPage(): JSX.Element;
+export default function SignupPage() {
+  return (
+    <div className="flex h-screen items-center justify-center bg-[#080c18] font-mono">
+      <span className="text-[11px] tracking-widest text-zinc-600 uppercase">Signup — coming soon</span>
+    </div>
+  );
+}
+

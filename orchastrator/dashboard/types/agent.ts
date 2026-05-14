@@ -1,12 +1,16 @@
 export interface Agent {
   id: string;
   name: string;
-  status: 'active' | 'idle' | 'error';
   type: 'coding' | 'research' | 'review' | 'runtime';
-  description: string;
-  createdAt: string;
-  updatedAt: string;
-  lastRun?: string;
+  status: 'active' | 'idle' | 'error' | 'stopped';
+  activity: string;        // e.g. "THINKING", "SCRAPING", "IDLE"
+  progress: number;        // 0-100
+  description: string;     // current activity description / thought
+  tokens_per_sec: number;
+  cost_estimate: number;
+  model: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface CreateAgentRequest {
@@ -14,3 +18,4 @@ export interface CreateAgentRequest {
   type: Agent['type'];
   description: string;
 }
+
