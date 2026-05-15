@@ -374,7 +374,7 @@ class CodeExecutor:
             )
 
         try:
-            from sqlalchemy import create_engine, text  # noqa: PLC0415
+            from sqlalchemy import create_engine, text  # noqa: PLC0415, F401 # type: ignore
         except ImportError:
             return CodeExecutionResult(
                 success=False,
@@ -432,37 +432,80 @@ class CodeExecutor:
         self, language: Language, config: Dict[str, Any]
     ) -> ExecutionEnvironment:
         """Create execution environment."""
-        pass
+        if language in self._environments:
+            return self._environments[language]
+        env = ExecutionEnvironment(
+            language=language,
+            version=config.get("version", "latest"),
+            packages=config.get("packages", []),
+            environment_vars=config.get("environment_vars", {}),
+            working_directory=config.get("working_directory", "/tmp"),
+            timeout=config.get("timeout", 30),
+            memory_limit_mb=config.get("memory_limit_mb", 512),
+        )
+        self._environments[language] = env       
+        return env
 
     def destroy_environment(self, language: Language) -> bool:
         """Destroy execution environment."""
-        pass
+        if language in self._environments:
+            del self._environments[language]
+            return True
+        return False
 
     def get_environment(self, language: Language) -> Optional[ExecutionEnvironment]:
         """Get execution environment."""
-        pass
+        return self._environments.get(language)
+        
 
     def install_package(
         self, language: Language, package: str, version: Optional[str] = None
     ) -> bool:
         """Install package in environment."""
-        pass
+        if language not in self._environments:
+            return False
+        env = self._environments[language]
+        pkg_str = f"{package}=={version}" if version else package
+        for i , existing_pkg in enumerate(env.packages):
+            if existing_pkg.startswith(package + "==") or existing_pkg == package:
+                env.packages[i] = pkg_str
+                break
+        env.packages.append(pkg_str)
+        return True
+
+        
 
     def install_packages(
         self, language: Language, packages: List[str]
     ) -> Dict[str, bool]:
         """Install multiple packages."""
-        pass
+        results = {}
+        for pkg in packages:
+            if "==" in pkg:
+                package, version = pkg.split("==", 1)
+            else:
+                package, version = pkg, None
+            result = self.install_package(language, package, version)
+            results[pkg] = result
+        return results
+        
 
     def list_installed_packages(self, language: Language) -> List[str]:
         """List installed packages."""
-        pass
+        if language not in self._environments:
+            return []
+        return self._environments[language].packages
+        
 
     def set_environment_variable(
         self, language: Language, key: str, value: str
     ) -> None:
         """Set environment variable."""
-        pass
+        if language not in self._environments:
+            return
+        env = self._environments[language]
+        env.environment_vars[key] = value
+    
 
     # ==================== Sandboxing ====================
 
