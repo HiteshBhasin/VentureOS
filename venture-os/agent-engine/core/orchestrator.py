@@ -221,7 +221,9 @@ class Orchestrator:
         error = event.data.get("error")
         if task_id:
             logger.error(f"Task failed: {task_id} - {error}")
-            self.mark_task_failed(task_id, Exception(str(error) if error else "Unknown error"))
+            self.mark_task_failed(
+                task_id, Exception(str(error) if error else "Unknown error")
+            )
 
     def _on_budget_warning(self, event: Event) -> None:
         """Handle budget warning event."""
@@ -242,7 +244,9 @@ class Orchestrator:
             return {"status": "error", "message": "Invalid or empty user input"}
 
         self._correlation_id = self.get_correlation_id()
-        logger.info(f"Processing request [{self._correlation_id}]: {user_input[:80]}...")
+        logger.info(
+            f"Processing request [{self._correlation_id}]: {user_input[:80]}..."
+        )
 
         try:
             execution_plan = self.create_execution_plan(user_input)
@@ -323,7 +327,9 @@ class Orchestrator:
 
             for task_node in ready_tasks:
                 if not self.check_budget_before_execution(task_node):
-                    self.mark_task_failed(task_node.task_id, Exception("Budget exceeded"))
+                    self.mark_task_failed(
+                        task_node.task_id, Exception("Budget exceeded")
+                    )
                     continue
                 try:
                     agent = self.spawn_and_configure_agent(task_node)
@@ -368,9 +374,7 @@ class Orchestrator:
             self.task_graph.mark_task_failed(task_id, str(error))
             affected = self.task_graph.propagate_failure(task_id)
             if affected:
-                logger.warning(
-                    f"Task {task_id} failure propagated to: {affected}"
-                )
+                logger.warning(f"Task {task_id} failure propagated to: {affected}")
             logger.error(f"Task {task_id} marked failed: {error}")
 
     # ==================== AGENT SPAWNING & MANAGEMENT ====================
@@ -380,12 +384,12 @@ class Orchestrator:
         if not self.agent_factory:
             raise RuntimeError("AgentFactory not initialized")
         task_dict = (
-            task.__dict__ if hasattr(task, "__dict__") else task
-            if isinstance(task, dict)
-            else {"name": str(task)}
+            task.__dict__
+            if hasattr(task, "__dict__")
+            else task if isinstance(task, dict) else {"name": str(task)}
         )
         agent_type = (
-            task.metadata.get("agent_type", None)
+            task["metadata"].get("agent_type", None)
             if hasattr(task, "metadata")
             else None
         )
@@ -475,6 +479,7 @@ class Orchestrator:
         """Transition agent to running state."""
         if hasattr(agent, "set_state"):
             from .state_machine import AgentState
+
             agent.set_state(AgentState.RUNNING)
         elif hasattr(agent, "start"):
             agent.start()
@@ -484,6 +489,7 @@ class Orchestrator:
         agent = self.get_agent_by_id(agent_id)
         if agent and hasattr(agent, "set_state"):
             from .state_machine import AgentState
+
             agent.set_state(AgentState.PAUSED)
 
     def resume_agent(self, agent_id: str) -> None:
@@ -491,6 +497,7 @@ class Orchestrator:
         agent = self.get_agent_by_id(agent_id)
         if agent and hasattr(agent, "set_state"):
             from .state_machine import AgentState
+
             agent.set_state(AgentState.RUNNING)
 
     def stop_agent(self, agent_id: str) -> None:
@@ -506,6 +513,7 @@ class Orchestrator:
         agent = self.get_agent_by_id(agent_id)
         if agent and hasattr(agent, "set_state"):
             from .state_machine import AgentState
+
             agent.set_state(AgentState.IDLE)
 
     # ==================== COMPLETION & FAILURE HANDLING ====================
@@ -544,6 +552,7 @@ class Orchestrator:
             task.metadata["retry_count"] = task.metadata.get("retry_count", 0) + 1
         if hasattr(task, "status"):
             from .task_graph import TaskStatus
+
             task.status = TaskStatus.PENDING
         logger.info(f"Retrying task: {getattr(task, 'task_id', task)}")
 
@@ -626,6 +635,7 @@ class Orchestrator:
             logger.warning(f"Unknown event type: {event_type}")
             return
         from datetime import datetime
+
         event = Event(
             event_type=evt_enum,
             source="Orchestrator",
@@ -711,7 +721,9 @@ class Orchestrator:
     ) -> None:
         """Record token usage for metrics."""
         if self.budget_manager:
-            self.budget_manager.record_token_usage(prompt_tokens, completion_tokens, model)
+            self.budget_manager.record_token_usage(
+                prompt_tokens, completion_tokens, model
+            )
 
     def record_cost(self, source: str, amount: float) -> None:
         """Record cost expenditure."""
@@ -745,7 +757,9 @@ class Orchestrator:
         if not self.metrics:
             return
         task_id = getattr(task, "task_id", str(task))
-        self.metrics.record_histogram("task_duration_seconds", duration, labels={"task_id": task_id})
+        self.metrics.record_histogram(
+            "task_duration_seconds", duration, labels={"task_id": task_id}
+        )
         self.metrics.increment_counter(
             "tasks_completed" if success else "tasks_failed",
             labels={"task_id": task_id},
@@ -793,6 +807,7 @@ class Orchestrator:
     def generate_execution_report(self) -> Dict[str, Any]:
         """Generate report: timeline, resource usage, cost breakdown, traces."""
         from datetime import datetime
+
         report: Dict[str, Any] = {
             "generated_at": datetime.now().isoformat(),
             "correlation_id": self._correlation_id,

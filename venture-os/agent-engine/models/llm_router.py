@@ -68,6 +68,10 @@ class LLMRouter:
         self._strategy: RoutingStrategy = RoutingStrategy.COST_OPTIMIZED
         self._fallback_chain: List[str] = []
         self._round_robin_index: int = 0
+        self._cost_limits: Dict[str, float] = {}
+        self._rate_limit_windows: Dict[str, List[float]] = {}
+        self._routing_history: List[Dict[str, Any]] = []
+        self._endpoint_stats: Dict[str, Dict[str, Any]] = {}
 
     # ==================== Endpoint Management ====================
 
@@ -415,15 +419,32 @@ class LLMRouter:
 
     def get_health_status(self, name: str) -> Dict[str, Any]:
         """Get endpoint health status."""
-        pass
+        if name in self._endpoints:
+            return {
+                "healthy": True,  # Placeholder for actual health check
+                "last_checked": None,  # Placeholder for last health check timestamp
+                "error_rate": 0.0,  # Placeholder for error rate
+            }
+        raise ValueError(f"Endpoint not found: {name}")
 
     def mark_unhealthy(self, name: str, duration_seconds: int = 60) -> None:
         """Mark endpoint as unhealthy."""
-        pass
+        import threading
+
+        if name not in self._endpoints:
+            raise ValueError(f"Endpoint not found: {name}")
+        self.disable_endpoint(name)
+        timer = threading.Timer(
+            duration_seconds, lambda: self.enable_endpoint(name), args=[name]
+        )
+        timer.daemon = True
+        timer.start()
 
     def mark_healthy(self, name: str) -> None:
         """Mark endpoint as healthy."""
-        pass
+        if name not in self._endpoints:
+            raise ValueError(f"Endpoint not found: {name}")
+        self.enable_endpoint(name)
 
     # ==================== Cost Management ====================
 
@@ -431,68 +452,220 @@ class LLMRouter:
         self, endpoint_name: str, input_tokens: int, output_tokens: int
     ) -> float:
         """Estimate request cost."""
-        pass
+        if endpoint_name not in self._endpoints:
+            raise ValueError(f"Endpoint not found: {endpoint_name}")
+        ep = self._endpoints[endpoint_name]
+        return (input_tokens / 1000.0) * ep.cost_per_1k_input + (
+            output_tokens / 1000.0
+        ) * ep.cost_per_1k_output
 
     def get_cheapest_endpoint(
         self, capabilities: Optional[List[ModelCapability]] = None
     ) -> Optional[ModelEndpoint]:
         """Get cheapest endpoint."""
-        pass
+        available = [ep for ep in self._endpoints.values() if ep.enabled]
+        if capabilities:
+            available = [
+                ep
+                for ep in available
+                if all(c in ep.capabilities for c in capabilities)
+            ]
+        if not available:
+            return None
+        return min(
+            available, key=lambda ep: ep.cost_per_1k_input + ep.cost_per_1k_output
+        )
 
     def get_cost_summary(self) -> Dict[str, float]:
         """Get cost summary by endpoint."""
-        pass
+        return {
+            name: stats.get("total_cost", 0.0)
+            for name, stats in self._endpoint_stats.items()
+        }
 
     def set_cost_limit(self, endpoint_name: str, daily_limit: float) -> None:
         """Set daily cost limit for endpoint."""
-        pass
+        if endpoint_name not in self._endpoints:
+            raise ValueError(f"Endpoint not found: {endpoint_name}")
+        self._cost_limits[endpoint_name] = daily_limit
 
     # ==================== Rate Limiting ====================
 
     def check_rate_limit(self, name: str) -> bool:
         """Check if endpoint is within rate limit."""
-        pass
+        import time
+
+        if name not in self._endpoints:
+            raise ValueError(f"Endpoint not found: {name}")
+        ep = self._endpoints[name]
+        if ep.rate_limit is None:
+            return True
+        now = time.time()
+        window = [
+            ts for ts in self._rate_limit_windows.get(name, []) if now - ts < 60.0
+        ]
+        self._rate_limit_windows[name] = window
+        return len(window) < ep.rate_limit
 
     def get_rate_limit_status(self, name: str) -> Dict[str, Any]:
         """Get rate limit status."""
-        pass
+        import time
+
+        if name not in self._endpoints:
+            raise ValueError(f"Endpoint not found: {name}")
+        ep = self._endpoints[name]
+        now = time.time()
+        window = [
+            ts for ts in self._rate_limit_windows.get(name, []) if now - ts < 60.0
+        ]
+        self._rate_limit_windows[name] = window
+        return {
+            "endpoint": name,
+            "rate_limit": ep.rate_limit,
+            "current_count": len(window),
+            "within_limit": ep.rate_limit is None or len(window) < ep.rate_limit,
+            "window_seconds": 60,
+        }
 
     def set_rate_limit(self, name: str, requests_per_minute: int) -> None:
         """Set rate limit for endpoint."""
-        pass
+        if name not in self._endpoints:
+            raise ValueError(f"Endpoint not found: {name}")
+        self._endpoints[name].rate_limit = requests_per_minute
+        self._rate_limit_windows.setdefault(name, [])
 
     def reset_rate_limit(self, name: str) -> None:
         """Reset rate limit counter."""
-        pass
+        if name not in self._endpoints:
+            raise ValueError(f"Endpoint not found: {name}")
+        self._rate_limit_windows[name] = []
 
     # ==================== Statistics ====================
 
     def get_stats(self) -> Dict[str, Any]:
         """Get router statistics."""
-        pass
+        total_requests = sum(
+            s.get("request_count", 0) for s in self._endpoint_stats.values()
+        )
+        total_cost = sum(
+            s.get("total_cost", 0.0) for s in self._endpoint_stats.values()
+        )
+        return {
+            "total_requests": total_requests,
+            "total_cost": total_cost,
+            "total_endpoints": len(self._endpoints),
+            "enabled_endpoints": sum(
+                1 for ep in self._endpoints.values() if ep.enabled
+            ),
+            "strategy": self._strategy.value,
+            "routing_history_count": len(self._routing_history),
+        }
 
     def get_endpoint_stats(self, name: str) -> Dict[str, Any]:
         """Get statistics for endpoint."""
-        pass
+        if name not in self._endpoints:
+            raise ValueError(f"Endpoint not found: {name}")
+        return dict(
+            self._endpoint_stats.get(
+                name,
+                {
+                    "request_count": 0,
+                    "total_cost": 0.0,
+                    "avg_latency_ms": 0.0,
+                    "error_count": 0,
+                },
+            )
+        )
 
     def get_routing_history(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Get routing decision history."""
-        pass
+        return self._routing_history[-limit:]
 
     def reset_stats(self) -> None:
         """Reset all statistics."""
-        pass
+        self._routing_history.clear()
+        self._endpoint_stats.clear()
 
     # ==================== Configuration ====================
 
     def export_config(self) -> Dict[str, Any]:
         """Export router configuration."""
-        pass
+        return {
+            "strategy": self._strategy.value,
+            "fallback_chain": list(self._fallback_chain),
+            "cost_limits": dict(self._cost_limits),
+            "endpoints": [
+                {
+                    "name": ep.name,
+                    "provider": ep.provider,
+                    "model_id": ep.model_id,
+                    "base_url": ep.base_url,
+                    "api_key": ep.api_key,
+                    "capabilities": [c.value for c in ep.capabilities],
+                    "max_tokens": ep.max_tokens,
+                    "cost_per_1k_input": ep.cost_per_1k_input,
+                    "cost_per_1k_output": ep.cost_per_1k_output,
+                    "latency_ms": ep.latency_ms,
+                    "weight": ep.weight,
+                    "max_context_length": ep.max_context_length,
+                    "enabled": ep.enabled,
+                    "rate_limit": ep.rate_limit,
+                }
+                for ep in self._endpoints.values()
+            ],
+        }
 
     def import_config(self, config: Dict[str, Any]) -> bool:
         """Import router configuration."""
-        pass
+        try:
+            if "strategy" in config:
+                self._strategy = RoutingStrategy(config["strategy"])
+            if "fallback_chain" in config:
+                self._fallback_chain = list(config["fallback_chain"])
+            if "cost_limits" in config:
+                self._cost_limits = dict(config["cost_limits"])
+            for ep_data in config.get("endpoints", []):
+                capabilities = [
+                    ModelCapability(c) for c in ep_data.get("capabilities", [])
+                ]
+                endpoint = ModelEndpoint(
+                    name=ep_data["name"],
+                    provider=ep_data["provider"],
+                    model_id=ep_data["model_id"],
+                    base_url=ep_data.get("base_url", ""),
+                    api_key=ep_data.get("api_key", ""),
+                    capabilities=capabilities,
+                    max_tokens=ep_data.get("max_tokens", 4096),
+                    cost_per_1k_input=ep_data.get("cost_per_1k_input", 0.0),
+                    cost_per_1k_output=ep_data.get("cost_per_1k_output", 0.0),
+                    latency_ms=ep_data.get("latency_ms", 0.0),
+                    weight=ep_data.get("weight", 1.0),
+                    max_context_length=ep_data.get("max_context_length", 4096),
+                    enabled=ep_data.get("enabled", True),
+                    rate_limit=ep_data.get("rate_limit"),
+                )
+                self._endpoints[endpoint.name] = endpoint
+            return True
+        except (KeyError, ValueError):
+            return False
 
     def validate_config(self) -> Dict[str, Any]:
         """Validate current configuration."""
-        pass
+        errors: List[str] = []
+        warnings: List[str] = []
+        if not self._endpoints:
+            warnings.append("No endpoints registered")
+        for name, ep in self._endpoints.items():
+            if not ep.api_key:
+                warnings.append(f"Endpoint '{name}' has no API key set")
+            if not ep.model_id:
+                errors.append(f"Endpoint '{name}' has no model_id set")
+            if ep.weight < 0:
+                errors.append(f"Endpoint '{name}' has a negative weight")
+        if self._strategy == RoutingStrategy.FALLBACK and not self._fallback_chain:
+            warnings.append("Strategy is FALLBACK but no fallback chain is configured")
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors,
+            "warnings": warnings,
+        }

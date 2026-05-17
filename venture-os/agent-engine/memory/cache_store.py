@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 try:
     import redis as _redis_lib
+
     _HAS_REDIS = True
 except ImportError:
     _HAS_REDIS = False
@@ -46,8 +47,12 @@ class CacheStore:
         if _HAS_REDIS:
             try:
                 self._client = _redis_lib.Redis(
-                    host=host, port=port, db=db, password=password,
-                    decode_responses=False, socket_connect_timeout=5,
+                    host=host,
+                    port=port,
+                    db=db,
+                    password=password,
+                    decode_responses=False,
+                    socket_connect_timeout=5,
                 )
                 self._client.ping()
                 self._connected = True
@@ -110,7 +115,8 @@ class CacheStore:
         if self._client:
             try:
                 data = self._client.get(key)
-                return self._deserialize(data) if data is not None else None
+                byte_data = data if isinstance(data, bytes) else None
+                return self._deserialize(byte_data) if byte_data is not None else None
             except Exception:
                 pass
         entry = self._local_cache.get(key)
@@ -324,7 +330,9 @@ class CacheStore:
         """Push to left of list."""
         if self._client:
             try:
-                return int(self._client.lpush(key, *[self._serialize(v) for v in values]))
+                return int(
+                    self._client.lpush(key, *[self._serialize(v) for v in values])
+                )
             except Exception:
                 pass
         lst = self.get(self._list_key(key)) or []
@@ -337,7 +345,9 @@ class CacheStore:
         """Push to right of list."""
         if self._client:
             try:
-                return int(self._client.rpush(key, *[self._serialize(v) for v in values]))
+                return int(
+                    self._client.rpush(key, *[self._serialize(v) for v in values])
+                )
             except Exception:
                 pass
         lst = self.get(self._list_key(key)) or []
@@ -384,7 +394,7 @@ class CacheStore:
             except Exception:
                 pass
         lst = self.get(self._list_key(key)) or []
-        return lst[start: end + 1 if end != -1 else None]
+        return lst[start : end + 1 if end != -1 else None]
 
     def llen(self, key: str) -> int:
         """Get list length."""
@@ -404,7 +414,9 @@ class CacheStore:
         """Add to set."""
         if self._client:
             try:
-                return int(self._client.sadd(key, *[self._serialize(v) for v in values]))
+                return int(
+                    self._client.sadd(key, *[self._serialize(v) for v in values])
+                )
             except Exception:
                 pass
         s = set(self.get(self._set_key(key)) or [])
@@ -417,7 +429,9 @@ class CacheStore:
         """Remove from set."""
         if self._client:
             try:
-                return int(self._client.srem(key, *[self._serialize(v) for v in values]))
+                return int(
+                    self._client.srem(key, *[self._serialize(v) for v in values])
+                )
             except Exception:
                 pass
         s = set(self.get(self._set_key(key)) or [])
@@ -466,7 +480,7 @@ class CacheStore:
             except Exception:
                 pass
         matched = self.keys(pattern)
-        chunk = matched[cursor: cursor + count]
+        chunk = matched[cursor : cursor + count]
         next_cursor = cursor + count if cursor + count < len(matched) else 0
         return next_cursor, chunk
 
