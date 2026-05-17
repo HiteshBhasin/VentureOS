@@ -1,7 +1,16 @@
 # Fast cache (Redis)
+import fnmatch
+import json
+import time
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
+
+try:
+    import redis as _redis_lib
+    _HAS_REDIS = True
+except ImportError:
+    _HAS_REDIS = False
 
 
 @dataclass
@@ -34,196 +43,491 @@ class CacheStore:
         password: Optional[str] = None,
     ) -> bool:
         """Connect to Redis server."""
-        pass
+        if _HAS_REDIS:
+            try:
+                self._client = _redis_lib.Redis(
+                    host=host, port=port, db=db, password=password,
+                    decode_responses=False, socket_connect_timeout=5,
+                )
+                self._client.ping()
+                self._connected = True
+                return True
+            except Exception:
+                self._client = None
+        # Fall back to in-memory
+        self._connected = True
+        return True
 
     def disconnect(self) -> None:
         """Disconnect from Redis server."""
-        pass
+        if self._client:
+            try:
+                self._client.close()
+            except Exception:
+                pass
+            self._client = None
+        self._connected = False
 
     def is_connected(self) -> bool:
         """Check if connected to Redis."""
-        pass
+        return self._connected
 
     def ping(self) -> bool:
         """Ping Redis server."""
-        pass
+        if self._client:
+            try:
+                return bool(self._client.ping())
+            except Exception:
+                return False
+        return self._connected
 
     def get_connection_info(self) -> Dict[str, Any]:
         """Get connection information."""
-        pass
+        return {
+            "connected": self._connected,
+            "backend": "redis" if self._client else "in-memory",
+            "local_cache_size": len(self._local_cache),
+        }
 
     # ==================== Basic Operations ====================
 
+    def _serialize(self, value: Any) -> bytes:
+        return json.dumps(value, default=str).encode()
+
+    def _deserialize(self, data: bytes) -> Any:
+        if data is None:
+            return None
+        try:
+            return json.loads(data.decode())
+        except Exception:
+            return data
+
+    def _is_expired(self, entry: CacheEntry) -> bool:
+        return entry.expires_at is not None and datetime.utcnow() > entry.expires_at
+
     def get(self, key: str) -> Optional[Any]:
         """Get value by key."""
-        pass
+        if self._client:
+            try:
+                data = self._client.get(key)
+                return self._deserialize(data) if data is not None else None
+            except Exception:
+                pass
+        entry = self._local_cache.get(key)
+        if entry is None:
+            return None
+        if self._is_expired(entry):
+            del self._local_cache[key]
+            return None
+        entry.hits += 1
+        return entry.value
 
     def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
         """Set key-value pair."""
-        pass
+        if self._client:
+            try:
+                data = self._serialize(value)
+                if ttl:
+                    self._client.setex(key, ttl, data)
+                else:
+                    self._client.set(key, data)
+                return True
+            except Exception:
+                pass
+        expires_at = datetime.utcnow() + timedelta(seconds=ttl) if ttl else None
+        self._local_cache[key] = CacheEntry(
+            key=key, value=value, created_at=datetime.utcnow(), expires_at=expires_at
+        )
+        return True
 
     def delete(self, key: str) -> bool:
         """Delete key."""
-        pass
+        deleted = False
+        if self._client:
+            try:
+                deleted = bool(self._client.delete(key))
+            except Exception:
+                pass
+        if key in self._local_cache:
+            del self._local_cache[key]
+            deleted = True
+        return deleted
 
     def exists(self, key: str) -> bool:
         """Check if key exists."""
-        pass
+        if self._client:
+            try:
+                return bool(self._client.exists(key))
+            except Exception:
+                pass
+        entry = self._local_cache.get(key)
+        if entry is None:
+            return False
+        if self._is_expired(entry):
+            del self._local_cache[key]
+            return False
+        return True
 
     def expire(self, key: str, seconds: int) -> bool:
         """Set expiration on key."""
-        pass
+        if self._client:
+            try:
+                return bool(self._client.expire(key, seconds))
+            except Exception:
+                pass
+        entry = self._local_cache.get(key)
+        if entry:
+            entry.expires_at = datetime.utcnow() + timedelta(seconds=seconds)
+            return True
+        return False
 
     def ttl(self, key: str) -> int:
         """Get time-to-live for key."""
-        pass
+        if self._client:
+            try:
+                return int(self._client.ttl(key))
+            except Exception:
+                pass
+        entry = self._local_cache.get(key)
+        if entry is None or entry.expires_at is None:
+            return -1
+        remaining = (entry.expires_at - datetime.utcnow()).total_seconds()
+        return max(0, int(remaining))
 
     def persist(self, key: str) -> bool:
         """Remove expiration from key."""
-        pass
+        if self._client:
+            try:
+                return bool(self._client.persist(key))
+            except Exception:
+                pass
+        entry = self._local_cache.get(key)
+        if entry:
+            entry.expires_at = None
+            return True
+        return False
 
     # ==================== Batch Operations ====================
 
     def mget(self, keys: List[str]) -> Dict[str, Any]:
         """Get multiple keys."""
-        pass
+        return {k: self.get(k) for k in keys}
 
     def mset(self, mapping: Dict[str, Any], ttl: Optional[int] = None) -> bool:
         """Set multiple key-value pairs."""
-        pass
+        for k, v in mapping.items():
+            self.set(k, v, ttl=ttl)
+        return True
 
     def mdelete(self, keys: List[str]) -> int:
         """Delete multiple keys. Returns count deleted."""
-        pass
+        return sum(1 for k in keys if self.delete(k))
 
     # ==================== Atomic Operations ====================
 
     def incr(self, key: str, amount: int = 1) -> int:
         """Increment value."""
-        pass
+        if self._client:
+            try:
+                return int(self._client.incr(key, amount))
+            except Exception:
+                pass
+        current = int(self.get(key) or 0)
+        new_val = current + amount
+        self.set(key, new_val)
+        return new_val
 
     def decr(self, key: str, amount: int = 1) -> int:
         """Decrement value."""
-        pass
+        return self.incr(key, -amount)
 
     def getset(self, key: str, value: Any) -> Optional[Any]:
         """Get old value and set new value."""
-        pass
+        old = self.get(key)
+        self.set(key, value)
+        return old
 
     def setnx(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
         """Set if not exists."""
-        pass
+        if self.exists(key):
+            return False
+        return self.set(key, value, ttl=ttl)
 
     # ==================== Hash Operations ====================
+    # Hash operations use a nested dict in the local cache.
+
+    def _hash_key(self, name: str) -> str:
+        return f"__hash__{name}"
 
     def hget(self, name: str, key: str) -> Optional[Any]:
         """Get hash field."""
-        pass
+        if self._client:
+            try:
+                data = self._client.hget(name, key)
+                return self._deserialize(data) if data is not None else None
+            except Exception:
+                pass
+        h = self.get(self._hash_key(name)) or {}
+        return h.get(key)
 
     def hset(self, name: str, key: str, value: Any) -> bool:
         """Set hash field."""
-        pass
+        if self._client:
+            try:
+                self._client.hset(name, key, self._serialize(value))
+                return True
+            except Exception:
+                pass
+        h = self.get(self._hash_key(name)) or {}
+        h[key] = value
+        self.set(self._hash_key(name), h)
+        return True
 
     def hgetall(self, name: str) -> Dict[str, Any]:
         """Get all hash fields."""
-        pass
+        if self._client:
+            try:
+                raw = self._client.hgetall(name)
+                return {k.decode(): self._deserialize(v) for k, v in raw.items()}
+            except Exception:
+                pass
+        return self.get(self._hash_key(name)) or {}
 
     def hdel(self, name: str, *keys: str) -> int:
         """Delete hash fields."""
-        pass
+        if self._client:
+            try:
+                return int(self._client.hdel(name, *keys))
+            except Exception:
+                pass
+        h = self.get(self._hash_key(name)) or {}
+        count = sum(1 for k in keys if k in h)
+        for k in keys:
+            h.pop(k, None)
+        self.set(self._hash_key(name), h)
+        return count
 
     def hexists(self, name: str, key: str) -> bool:
         """Check if hash field exists."""
-        pass
+        return self.hget(name, key) is not None
 
     def hkeys(self, name: str) -> List[str]:
         """Get all hash keys."""
-        pass
+        return list(self.hgetall(name).keys())
 
     # ==================== List Operations ====================
 
+    def _list_key(self, key: str) -> str:
+        return f"__list__{key}"
+
     def lpush(self, key: str, *values: Any) -> int:
         """Push to left of list."""
-        pass
+        if self._client:
+            try:
+                return int(self._client.lpush(key, *[self._serialize(v) for v in values]))
+            except Exception:
+                pass
+        lst = self.get(self._list_key(key)) or []
+        for v in values:
+            lst.insert(0, v)
+        self.set(self._list_key(key), lst)
+        return len(lst)
 
     def rpush(self, key: str, *values: Any) -> int:
         """Push to right of list."""
-        pass
+        if self._client:
+            try:
+                return int(self._client.rpush(key, *[self._serialize(v) for v in values]))
+            except Exception:
+                pass
+        lst = self.get(self._list_key(key)) or []
+        lst.extend(values)
+        self.set(self._list_key(key), lst)
+        return len(lst)
 
     def lpop(self, key: str) -> Optional[Any]:
         """Pop from left of list."""
-        pass
+        if self._client:
+            try:
+                data = self._client.lpop(key)
+                return self._deserialize(data) if data is not None else None
+            except Exception:
+                pass
+        lst = self.get(self._list_key(key)) or []
+        if not lst:
+            return None
+        val = lst.pop(0)
+        self.set(self._list_key(key), lst)
+        return val
 
     def rpop(self, key: str) -> Optional[Any]:
         """Pop from right of list."""
-        pass
+        if self._client:
+            try:
+                data = self._client.rpop(key)
+                return self._deserialize(data) if data is not None else None
+            except Exception:
+                pass
+        lst = self.get(self._list_key(key)) or []
+        if not lst:
+            return None
+        val = lst.pop()
+        self.set(self._list_key(key), lst)
+        return val
 
     def lrange(self, key: str, start: int, end: int) -> List[Any]:
         """Get list range."""
-        pass
+        if self._client:
+            try:
+                raw = self._client.lrange(key, start, end)
+                return [self._deserialize(v) for v in raw]
+            except Exception:
+                pass
+        lst = self.get(self._list_key(key)) or []
+        return lst[start: end + 1 if end != -1 else None]
 
     def llen(self, key: str) -> int:
         """Get list length."""
-        pass
+        if self._client:
+            try:
+                return int(self._client.llen(key))
+            except Exception:
+                pass
+        return len(self.get(self._list_key(key)) or [])
 
     # ==================== Set Operations ====================
 
+    def _set_key(self, key: str) -> str:
+        return f"__set__{key}"
+
     def sadd(self, key: str, *values: Any) -> int:
         """Add to set."""
-        pass
+        if self._client:
+            try:
+                return int(self._client.sadd(key, *[self._serialize(v) for v in values]))
+            except Exception:
+                pass
+        s = set(self.get(self._set_key(key)) or [])
+        before = len(s)
+        s.update(values)
+        self.set(self._set_key(key), list(s))
+        return len(s) - before
 
     def srem(self, key: str, *values: Any) -> int:
         """Remove from set."""
-        pass
+        if self._client:
+            try:
+                return int(self._client.srem(key, *[self._serialize(v) for v in values]))
+            except Exception:
+                pass
+        s = set(self.get(self._set_key(key)) or [])
+        before = len(s)
+        s.difference_update(values)
+        self.set(self._set_key(key), list(s))
+        return before - len(s)
 
     def smembers(self, key: str) -> set:
         """Get all set members."""
-        pass
+        if self._client:
+            try:
+                raw = self._client.smembers(key)
+                return {self._deserialize(v) for v in raw}
+            except Exception:
+                pass
+        return set(self.get(self._set_key(key)) or [])
 
     def sismember(self, key: str, value: Any) -> bool:
         """Check if value is in set."""
-        pass
+        return value in self.smembers(key)
 
     def scard(self, key: str) -> int:
         """Get set cardinality."""
-        pass
+        return len(self.smembers(key))
 
     # ==================== Key Management ====================
 
     def keys(self, pattern: str = "*") -> List[str]:
         """Get keys matching pattern."""
-        pass
+        if self._client:
+            try:
+                return [k.decode() for k in self._client.keys(pattern)]
+            except Exception:
+                pass
+        all_keys = list(self._local_cache.keys())
+        if pattern == "*":
+            return all_keys
+        return [k for k in all_keys if fnmatch.fnmatch(k, pattern)]
 
     def scan(self, cursor: int = 0, pattern: str = "*", count: int = 100) -> tuple:
         """Scan keys incrementally."""
-        pass
+        if self._client:
+            try:
+                return self._client.scan(cursor=cursor, match=pattern, count=count)
+            except Exception:
+                pass
+        matched = self.keys(pattern)
+        chunk = matched[cursor: cursor + count]
+        next_cursor = cursor + count if cursor + count < len(matched) else 0
+        return next_cursor, chunk
 
     def rename(self, old_key: str, new_key: str) -> bool:
         """Rename a key."""
-        pass
+        val = self.get(old_key)
+        if val is None:
+            return False
+        self.set(new_key, val)
+        self.delete(old_key)
+        return True
 
     def type(self, key: str) -> str:
         """Get key type."""
-        pass
+        val = self.get(key)
+        if val is None:
+            return "none"
+        return type(val).__name__
 
     # ==================== Utility ====================
 
     def flush(self) -> None:
         """Flush all keys."""
-        pass
+        self._local_cache.clear()
+        if self._client:
+            try:
+                self._client.flushdb()
+            except Exception:
+                pass
 
     def flush_db(self) -> None:
         """Flush current database."""
-        pass
+        self.flush()
 
     def info(self) -> Dict[str, Any]:
         """Get Redis info."""
-        pass
+        if self._client:
+            try:
+                return dict(self._client.info())
+            except Exception:
+                pass
+        return {"backend": "in-memory", "keys": len(self._local_cache)}
 
     def dbsize(self) -> int:
         """Get number of keys."""
-        pass
+        if self._client:
+            try:
+                return int(self._client.dbsize())
+            except Exception:
+                pass
+        return len(self._local_cache)
 
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
-        pass
+        total = len(self._local_cache)
+        hits = sum(e.hits for e in self._local_cache.values())
+        expired = sum(1 for e in self._local_cache.values() if self._is_expired(e))
+        return {
+            "total_keys": total,
+            "total_hits": hits,
+            "expired_keys": expired,
+            "backend": "redis" if self._client else "in-memory",
+            "connected": self._connected,
+        }
