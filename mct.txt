@@ -1,0 +1,44 @@
+Where MCTS Applies
+Your system is an agentic task planner — it decomposes goals into tasks, assigns agents, and executes them. MCTS is ideal here because:
+
+State = current task graph snapshot (which tasks are completed / pending / failed) + remaining budget
+Action = choose which ready task to execute next + which agent type to assign
+Simulation (rollout) = estimate expected outcome using heuristics or a cheap LLM call
+Reward = tasks completed / budget spent / overall progress toward the goal
+Backpropagation = UCB1 updates to balance exploration vs exploitation
+The best integration point is a new core/mcts_planner.py plugged into the Orchestrator's task scheduling (process_user_request / task selection loop) to replace the naive topological ordering with MCTS-guided selection.
+
+1. Create core/mcts_planner.py — the MCTS engine
+2. Modify core/orchestrator.py — use the planner to pick the next task
+3. Optionally wire into core/meta_agent.py — for strategy refinement
+
+
+Created 2 todos
+Got it. Here's how MCTS would apply to this project conceptually:
+
+The Problem MCTS Solves Here
+Your Orchestrator currently picks ready tasks in plain topological order — first available task runs first. MCTS would replace this with intelligent task sequencing by simulating thousands of possible execution paths and choosing the one with the best expected outcome.
+
+MCTS Mapped to Your System: 
+MCTS Concept	In VentureOS
+State	Snapshot of the TaskGraph — which tasks are COMPLETED, FAILED, PENDING, + remaining budget
+Action	Choose which ready task to run next (and optionally which agent type to assign)
+Simulation / Rollout	Randomly play out the remaining tasks to completion using a success probability estimate
+Reward	tasks_completed / total_tasks — or weighted by priority/cost
+Backpropagation	UCB1 updates score of each tried action based on rollout results
+The Four MCTS Steps in Your Context
+Selection — Walk the tree using UCB1 until you reach an unexpanded node (an untried task ordering)
+Expansion — Try one new task as the "next to execute" from the current state
+Simulation — Randomly play out the rest of the graph to a terminal state, scoring each path
+Backpropagation — Propagate the score back up, updating visit counts and average rewards
+Where It Plugs In
+execute_task_graph() in orchestrator.py — the get_executable_tasks() call currently returns all ready tasks. MCTS would rank them and return the best one to run next instead
+refine_strategy() in meta_agent.py — after failures, MCTS could re-plan by exploring alternative task orderings rather than just resetting and retrying
+create_execution_plan() — MCTS could also be used at planning time to choose the best task decomposition strategy before execution begins
+When It's Worth It
+MCTS adds value here when:
+
+Tasks have unequal costs/risks (some tasks may block many others if they fail)
+There's a budget constraint (you can't run everything, must pick the highest-value path)
+Tasks have uncertain outcomes (some agents fail more than others)
+For simple linear pipelines with no uncertainty, the topological sort is already optimal. But as complexity grows, MCTS can find better execution paths that maximize success while minimizing wasted effort.
