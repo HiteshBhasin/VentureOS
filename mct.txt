@@ -21,12 +21,16 @@ Your Orchestrator currently picks ready tasks in plain topological order — fir
 
 MCTS Mapped to Your System: 
 MCTS Concept	In VentureOS
-State	Snapshot of the TaskGraph — which tasks are COMPLETED, FAILED, PENDING, + remaining budget
-Action	Choose which ready task to run next (and optionally which agent type to assign)
-Simulation / Rollout	Randomly play out the remaining tasks to completion using a success probability estimate
-Reward	tasks_completed / total_tasks — or weighted by priority/cost
-Backpropagation	UCB1 updates score of each tried action based on rollout results
-The Four MCTS Steps in Your Context
+State: Snapshot of the TaskGraph — which tasks are COMPLETED, FAILED, PENDING, + remaining budget
+Action: Choose which ready task to run next (and optionally which agent type to assign)
+Simulation / Rollout Randomly play out the remaining tasks to completion using a success probability estimate.
+
+Reward	tasks_completed / total_tasks — or weighted by priority/cost.
+
+Backpropagation	UCB1 updates score of each tried action based on rollout results.
+
+The Four MCTS Steps in Your Context:
+
 Selection — Walk the tree using UCB1 until you reach an unexpanded node (an untried task ordering)
 Expansion — Try one new task as the "next to execute" from the current state
 Simulation — Randomly play out the rest of the graph to a terminal state, scoring each path
@@ -34,11 +38,121 @@ Backpropagation — Propagate the score back up, updating visit counts and avera
 Where It Plugs In
 execute_task_graph() in orchestrator.py — the get_executable_tasks() call currently returns all ready tasks. MCTS would rank them and return the best one to run next instead
 refine_strategy() in meta_agent.py — after failures, MCTS could re-plan by exploring alternative task orderings rather than just resetting and retrying
+
 create_execution_plan() — MCTS could also be used at planning time to choose the best task decomposition strategy before execution begins
 When It's Worth It
+
 MCTS adds value here when:
 
 Tasks have unequal costs/risks (some tasks may block many others if they fail)
 There's a budget constraint (you can't run everything, must pick the highest-value path)
 Tasks have uncertain outcomes (some agents fail more than others)
 For simple linear pipelines with no uncertainty, the topological sort is already optimal. But as complexity grows, MCTS can find better execution paths that maximize success while minimizing wasted effort.
+
+Yes, tree is the root node. Selection should walk down it using UCB1 until it reaches an unexpanded node, then return that node for expansion.
+
+Edited
+mct_tool.py+12-3
+Here's how it works:
+
+_ucb1 scores each child: value/visits + C * sqrt(ln(parent.visits) / visits). Unvisited nodes get inf so they're always tried first.
+Selection starts at tree (root) and greedily picks the highest UCB1 child at each level, stopping when a node has no children — that's the unexpanded leaf returned to Expansion.
+
+```
+AGENT_SUCCESS_RATE = { coding: 0.75, research: 0.65, review: 0.80, runtime: 0.70 }
+
+─────────────────────────────────────────
+MCTS(root, num_iterations):
+    repeat num_iterations times:
+        leaf    = Selection(root)
+        child   = Expansion(leaf)
+        reward  = Simulation(child)
+                  Backpropagation(reward, child)
+    return best child of root (highest visits)
+
+─────────────────────────────────────────
+Selection(tree):
+    node = tree
+    while node has children:
+        node = child with highest UCB1 score
+    return node                          ← unexpanded leaf
+
+─────────────────────────────────────────
+Expansion(leaf):
+    ready_tasks = tasks in leaf.state that are PENDING and dependencies met
+    if no ready_tasks:
+        return leaf                      ← terminal node
+    pick one untried task from ready_tasks
+    new_state = copy of leaf.state with that task marked as "being tried"
+    child = new MCT node(state=new_state, parent=leaf)
+    add child to leaf.children
+    return child
+
+─────────────────────────────────────────
+Simulation(child):
+    state = deep copy of child.state     ← don't mutate the real tree
+    while state is not terminal:
+        ready_tasks = tasks that are PENDING and dependencies met
+        if empty → break
+        task = random pick from ready_tasks (weighted by priority)
+        p    = AGENT_SUCCESS_RATE[task.assigned_agent_type]
+        if random() < p:
+            mark task as COMPLETED in state
+            unlock dependent tasks
+        else:
+            mark task as FAILED in state
+        deduct task.cost from state.budget
+        if state.budget <= 0 → break
+    reward = completed_tasks / total_tasks   ← or weighted version
+    return reward
+
+─────────────────────────────────────────
+Backpropagation(reward, child):
+    node = child
+    while node is not None:
+        node.visits += 1
+        node.value  += reward
+        node = node.parent
+
+─────────────────────────────────────────
+UCB1(node, C=1.414):
+    if node.visits == 0 → return infinity
+    return node.value / node.visits
+           + C * sqrt( ln(parent.visits) / node.visits )
+```
+
+The outer `MCTS` loop is what plugs into `orchestrator.py` — it runs N iterations and returns the best next task to actually execute.
+For your VentureOS system, the heuristic estimates the probability that a task succeeds when randomly "executed" during a rollout. Here are the natural signals you already have:
+
+**Per-task factors:**
+- **Agent type** — a `coding_agent` running a coding task has higher success probability than a `research_agent` running the same task. You already have agent types in the system.
+- **Task priority** — higher priority tasks tend to be better-defined, so slightly higher success chance
+- **Estimated cost vs remaining budget** — if the task costs more than what's left, it fails automatically
+
+**How it works in a rollout:**
+1. Look at all ready tasks in the current simulated state
+2. Pick one randomly (or weighted by priority)
+3. Roll a random number against that task's success probability (e.g. coding task + coding agent = 0.75, mismatched = 0.50)
+4. If success → mark task done, unlock dependents, continue
+5. If fail → mark task failed, check if it blocks others, continue
+6. Repeat until terminal
+
+**The reward at the end:**
+```
+reward = completed_tasks / total_tasks
+       — optionally weighted by priority or penalized by budget spent
+```
+
+**Key point:** these probabilities don't need to be precise — even rough estimates like `{coding: 0.75, research: 0.65, review: 0.80}` are enough. MCTS averages hundreds of rollouts, so individual accuracy matters less than relative ordering between paths.
+
+You could also replace the fixed probabilities later with a lightweight LLM call or historical success data from your `audit_log.py`.
+
+Yes, exactly. `child.state` is the starting point of the simulation — it represents the task graph snapshot *after* the expansion step chose that child node (i.e. after one new task was tentatively assigned/executed).
+
+So the flow is:
+
+```
+root.state  →  Selection  →  leaf.state  →  Expansion  →  child.state  →  Simulation starts here
+```
+
+`child.state` captures: which tasks are done, which are pending, budget remaining — everything the rollout needs to randomly play forward from that exact point until it hits a terminal condition.
