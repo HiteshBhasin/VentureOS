@@ -9,6 +9,7 @@ try:
     from sqlalchemy import create_engine, text, inspect as sa_inspect
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
+
     _HAS_SQLALCHEMY = True
 except ImportError:
     _HAS_SQLALCHEMY = False
@@ -120,7 +121,9 @@ class StructuredStore:
 
     # ==================== Query Operations ====================
 
-    def _exec(self, query: str, params: Optional[Tuple] = None, fetch: bool = False) -> Any:
+    def _exec(
+        self, query: str, params: Optional[Tuple] = None, fetch: bool = False
+    ) -> Any:
         """Internal: execute raw query via SQLAlchemy or no-op."""
         if not self._engine:
             return None
@@ -147,7 +150,9 @@ class StructuredStore:
             try:
                 rows_raw, cols, ms = self._exec(query, params, fetch=True)
                 rows = [dict(zip(cols, r)) for r in rows_raw]
-                return QueryResult(rows=rows, row_count=len(rows), columns=cols, execution_time_ms=ms)
+                return QueryResult(
+                    rows=rows, row_count=len(rows), columns=cols, execution_time_ms=ms
+                )
             except Exception:
                 pass
         return QueryResult(rows=[], row_count=0, columns=[], execution_time_ms=0.0)
@@ -232,7 +237,9 @@ class StructuredStore:
                 pass
         before = len(self._mem.get(table, []))
         self._mem[table] = [
-            r for r in self._mem.get(table, []) if not all(r.get(k) == v for k, v in where.items())
+            r
+            for r in self._mem.get(table, [])
+            if not all(r.get(k) == v for k, v in where.items())
         ]
         return before - len(self._mem.get(table, []))
 
@@ -257,6 +264,7 @@ class StructuredStore:
         offset: int = None,
     ) -> List[Dict[str, Any]]:
         """Select rows from table."""
+
         if self._engine:
             cols = ", ".join(columns) if columns else "*"
             q = f"SELECT {cols} FROM {table}"
@@ -411,7 +419,9 @@ class StructuredStore:
         if self._engine:
             try:
                 with self._engine.connect() as conn:
-                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {data_type}"))
+                    conn.execute(
+                        text(f"ALTER TABLE {table} ADD COLUMN {column} {data_type}")
+                    )
                     conn.commit()
                 return True
             except Exception:
@@ -497,7 +507,9 @@ class StructuredStore:
         """Vacuum database or table."""
         if self._engine:
             try:
-                with self._engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+                with self._engine.connect().execution_options(
+                    isolation_level="AUTOCOMMIT"
+                ) as conn:
                     conn.execute(text("VACUUM"))
             except Exception:
                 pass
@@ -525,9 +537,7 @@ class StructuredStore:
         """Get table size in bytes."""
         if self._engine:
             try:
-                result = self.query_scalar(
-                    f"SELECT pg_total_relation_size('{table}')"
-                )
+                result = self.query_scalar(f"SELECT pg_total_relation_size('{table}')")
                 return int(result) if result else 0
             except Exception:
                 pass
