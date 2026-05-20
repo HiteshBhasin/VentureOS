@@ -64,10 +64,10 @@ class Mct:
         """Run MCTS for N iterations and return the best child of the root.
 
         Each iteration runs the four MCTS steps:
-          1. Selection  – walk the tree using UCB1 to find a leaf
-          2. Expansion  – add a new child to that leaf
-          3. Simulation – roll out a random playout from the new child
-          4. Backpropagation – propagate the reward back up the tree
+          1. Selection walk the tree using UCB1 to find a leaf
+          2. Expansion add a new child to that leaf
+          3. Simulation roll out a random playout from the new child
+          4. Backpropagation propagate the reward back up the tree
 
         The best child is the one with the most visits (most robust estimate).
         """
