@@ -1,0 +1,140 @@
+================================================================================
+  VentureOS - PostgreSQL & Multi-Tenancy for Public Deployment
+================================================================================
+
+CURRENT PROBLEM
+---------------
+Your current codebase has NO multi-tenancy.
+If you publish this today, every user would see everyone else's agents,
+tasks, and memory. There is no user separation.
+
+Current Architecture (broken for public use):
+  All users → Same DB → Same agents/tasks/memory (no separation)
+
+What You Need:
+  User A → logs in → JWT token (has user_id) → only sees User A's data
+  User B → logs in → JWT token (has user_id) → only sees User B's data
+
+
+================================================================================
+  THE 3 THINGS MISSING
+================================================================================
+
+1. user_id ON EVERY TABLE
+--------------------------
+Every record in PostgreSQL needs to belong to a user.
+
+  Example - tasks table:
+    id | user_id | title | status | created_at
+
+  Example - agents table:
+    id | user_id | type | config | created_at
+
+
+2. AUTH MIDDLEWARE ON THE AGENT ENGINE API
+------------------------------------------
+File: venture-os/agent-engine/api/main.py
+
+Currently has:
+  allow_origins=["*"]   ← no restrictions
+  No auth checks on any route
+
+What it needs:
+  Every incoming request must carry a JWT token.
+  The middleware extracts user_id from the token before any route runs.
+  Requests without a valid token get rejected (401 Unauthorized).
+
+
+3. ALL QUERIES MUST BE FILTERED BY user_id
+------------------------------------------
+Currently (dangerous):
+  SELECT * FROM tasks
+
+What it needs to be:
+  SELECT * FROM tasks WHERE user_id = 'abc-123'
+
+Without this filter, User A can read/modify User B's data.
+
+
+================================================================================
+  PRACTICAL FLOW FOR PUBLIC DEPLOYMENT
+================================================================================
+
+[User signs up]
+    → Credentials stored in PostgreSQL users table (password hashed with bcrypt)
+    → Server returns a signed JWT token containing their user_id
+
+[User creates a task]
+    → JWT sent in Authorization header with every request
+    → API middleware extracts user_id from JWT
+    → Task stored in DB with that user_id attached
+
+[User views their dashboard]
+    → API queries: WHERE user_id = their_id
+    → They only see their own data, never another user's
+
+
+================================================================================
+  WHAT YOU NEED TO ADD / CHANGE
+================================================================================
+
+What                          | File to Change
+------------------------------|--------------------------------------------------
+users table in PostgreSQL     | venture-os/agent-engine/memory/structured_store.py
+JWT auth middleware            | venture-os/agent-engine/api/middleware/
+user_id field on schemas      | venture-os/agent-engine/schemas/task_schema.py
+                              | venture-os/agent-engine/schemas/agent_schema.py
+Filter all DB queries by      | venture-os/agent-engine/api/routes/ (all route files)
+  user_id                     |
+
+
+================================================================================
+  GOOD NEWS - FRONTEND IS PARTIALLY READY
+================================================================================
+
+Your frontend already has login/signup wired up:
+  File: orchastrator/dashboard/lib/api.ts
+
+  - login(email, password) → calls /auth/login
+  - signup(email, password, name) → calls /auth/signup
+  - logout() → calls /auth/logout
+
+The frontend is ready. The backend just doesn't enforce auth yet.
+
+
+================================================================================
+  RECOMMENDED TECH STACK FOR AUTH
+================================================================================
+
+  - Password hashing : bcrypt (never store plain text passwords)
+  - Tokens          : JWT (JSON Web Tokens) with an expiry (e.g. 24 hours)
+  - Middleware       : FastAPI Depends() with OAuth2PasswordBearer
+  - Library          : python-jose (JWT) + passlib (bcrypt)
+
+
+================================================================================
+  MINIMAL users TABLE SCHEMA
+================================================================================
+
+  CREATE TABLE users (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      email       TEXT UNIQUE NOT NULL,
+      name        TEXT,
+      password    TEXT NOT NULL,   -- bcrypt hashed, never plain text
+      created_at  TIMESTAMP DEFAULT NOW(),
+      is_active   BOOLEAN DEFAULT TRUE
+  );
+
+
+================================================================================
+  SUMMARY
+================================================================================
+
+  Step 1 - Add users table and password hashing
+  Step 2 - Implement /auth/login and /auth/signup routes in the backend
+  Step 3 - Add JWT auth middleware to protect all API routes
+  Step 4 - Add user_id column to tasks, agents, memory tables
+  Step 5 - Filter every DB query by the authenticated user's user_id
+  Step 6 - Set CORS to only allow your actual frontend domain (not "*")
+
+================================================================================
