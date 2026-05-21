@@ -1,3 +1,4 @@
+from typing import Any, Dict
 from supabase import create_client, Client
 from dotenv import load_dotenv
 import psycopg2
@@ -55,7 +56,7 @@ def insert(table: str, data: dict) -> None:
         print(f"Error inserting record: {e}")
 
 
-def retreieve(table: str, query: dict, columns: str = "*") -> list:
+def retreieve(table: str, query: dict, columns: str) -> list:
     """Retrieve records from a Supabase table based on a query."""
     try:
         response = engine.table(table).select(columns).match(query).execute()
