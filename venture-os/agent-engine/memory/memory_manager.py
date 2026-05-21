@@ -34,7 +34,7 @@ class MemoryEntry:
     created_at: datetime
     updated_at: datetime
     expires_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = None
+    metadata: Dict[str, Any] = {}
     embedding: Optional[List[float]] = None
 
 
@@ -212,8 +212,8 @@ class MemoryManager:
                     value=sr.metadata.get("value") if sr.metadata else None,
                     memory_type=memory_type or MemoryType.SEMANTIC,
                     tier=MemoryTier.VECTOR,
-                    created_at=datetime.utcnow(),
-                    updated_at=datetime.utcnow(),
+                    created_at=datetime.now(),
+                    updated_at=datetime.now(),
                     metadata=sr.metadata or {},
                     embedding=sr.vector,
                 ))
