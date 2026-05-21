@@ -11,6 +11,7 @@ uvicorn[standard]
 slowapi
 pypdf
 pymongo
+psycopg2
 pytest
 pytest-asyncio
 pyngrok
