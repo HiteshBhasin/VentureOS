@@ -130,11 +130,11 @@ The frontend is ready. The backend just doesn't enforce auth yet.
   SUMMARY
 ================================================================================
 
-  Step 1 - Add users table and password hashing
-  Step 2 - Implement /auth/login and /auth/signup routes in the backend
-  Step 3 - Add JWT auth middleware to protect all API routes
-  Step 4 - Add user_id column to tasks, agents, memory tables
-  Step 5 - Filter every DB query by the authenticated user's user_id
-  Step 6 - Set CORS to only allow your actual frontend domain (not "*")
+  Step 1 - DONE  users/profiles table handled by Supabase Auth + public.profiles mirror
+  Step 2 - DONE  /auth/signup, /auth/login, /auth/logout, /auth/me in auth_routes.py
+  Step 3 - DONE  AuthMiddleware in api/middleware/auth.py verifies Supabase JWT on every request
+  Step 4 - DONE  user_id on agents, tasks, memory_entries enforced by RLS in Supabase
+  Step 5 - DONE  Every query in agent_routes, task_routes, memory_routes filters by .eq("user_id", user_id)
+  Step 6 - DONE  CORS locked to ALLOWED_ORIGINS env var in main.py (no more allow_origins=["*"])
 
 ================================================================================
