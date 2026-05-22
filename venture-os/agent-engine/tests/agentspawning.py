@@ -1,7 +1,17 @@
-from core.llm_class import LLM
-from core.agent_factory import AgentFactory
-from agents.coding_agent import CodingAgent
-from agents.research_agent import ResearchAgent
+import sys
+import os
+
+# Allow imports from the agent-engine root regardless of where this script is run from
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+try:
+    from core.llm_class import LLM
+    from core.agent_factory import AgentFactory
+    from agents.coding_agent import CodingAgent
+    from agents.research_agent import ResearchAgent
+except ImportError as e:
+    print(f"Error importing modules: {e}")
+    print("Make sure you have the correct directory structure and that all dependencies are installed.")
+    sys.exit(1)
 
 llm = LLM(model="mistral-large-latest", temperature=0.4)
 factory = AgentFactory(llm=llm)
