@@ -1,4 +1,5 @@
 # Code generation agent
+import re
 from typing import Any, Dict, List, Optional
 from .base_agent import BaseAgent
 
@@ -67,8 +68,77 @@ class CodingAgent(BaseAgent):
                 refactor_type=task.get("refactor_type", "optimize"),
             )
             return {"status": "success", "type": "refactor_code", "code": result}
+        elif task_type == "generate_agent":
+            return self._generate_agent_task(
+                use_case=task.get("use_case", ""),
+                agent_name=task.get("agent_name", "custom"),
+                capabilities=task.get("capabilities", []),
+                save_path=task.get("save_path"),
+            )
         else:
             return {"error": f"Unsupported task type: {task_type}"}
+
+    # ==================== Agent Generation ====================
+
+    def _generate_agent_task(
+        self,
+        use_case: str,
+        agent_name: str,
+        capabilities: List[str],
+        save_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Generate a new agent class file for a given use case."""
+        import os
+
+        # Normalise class/file names
+        class_name = "".join(w.capitalize() for w in re.split(r"[\s_-]+", agent_name)) + "Agent"
+        file_name = re.sub(r"[^\w]+", "_", agent_name.lower()).strip("_") + "_agent.py"
+
+        caps_text = "\n".join(f"  - {c}" for c in capabilities) if capabilities else "  - general purpose task execution"
+
+        prompt = f"""Write a complete Python agent class for this use case:
+
+        Use case: {use_case}
+
+        Capabilities required:
+        {caps_text}
+
+        Rules you MUST follow:
+        1. Class must be named `{class_name}` and inherit from `BaseAgent`.
+        2. Start the file with: `from typing import Any, Dict, List, Optional`\n`from .base_agent import BaseAgent`
+        3. Implement `execute_task(self, task: Dict[str, Any]) -> Dict[str, Any]`.
+        4. In `execute_task`, route using `task.get("type")` — NOT "action" or anything else.
+        5. Each capability listed above becomes both a routing key in `execute_task` and a private method.
+        6. Each private method must call `self._invoke_llm(prompt, system_prompt)` to do its work.
+        7. On an unknown type, return `{{"status": "error", "error": f"Unknown task type: {{task.get('type')}}"}}`.
+        8. Return ONLY raw Python code — no markdown fences, no explanation."""
+
+        system_prompt = (
+            "You are an expert Python engineer writing AI agent classes. "
+            "Output only valid Python code. No markdown, no prose."
+        )
+
+        raw = self._invoke_llm(prompt=prompt, system_prompt=system_prompt) or ""
+
+        # Strip accidental markdown code fences
+        code = re.sub(r"^```[\w]*\n?", "", raw.strip(), flags=re.MULTILINE)
+        code = re.sub(r"```$", "", code.strip())
+
+        # Determine save path (default: agents/ next to this file)
+        if not save_path:
+            agents_dir = os.path.dirname(os.path.abspath(__file__))
+            save_path = os.path.join(agents_dir, file_name)
+
+        with open(save_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        return {
+            "status": "success",
+            "type": "generate_agent",
+            "class_name": class_name,
+            "file_path": save_path,
+            "code": code,
+        }
 
     # ==================== Code Generation ====================
 

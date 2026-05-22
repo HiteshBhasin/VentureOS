@@ -1,9 +1,11 @@
 # Agent Factory: Spawn and manage agents
 from typing import Any, Dict, List, Optional, Type
+import importlib.util
+import inspect
 import logging
 import uuid
 import time
-import asyncio 
+import asyncio
 from agents.base_agent import BaseAgent
 
 logger = logging.getLogger(__name__)
@@ -257,3 +259,81 @@ class AgentFactory:
             return self.tool_registry.get_all_tools()
 
         return []
+
+    # ==================== Dynamic Agent Generation ====================
+
+    def spawn_dynamic_agent(
+        self,
+        use_case: str,
+        agent_name: str,
+        capabilities: Optional[List[str]] = None,
+        config: Optional[Dict] = None,
+    ) -> BaseAgent:
+        """Use a CodingAgent to generate a brand-new agent class from a use-case
+        description, save it to agents/, dynamically load it, register it, and
+        return a running instance.
+
+        Args:
+            use_case:     Plain-English description of what the agent should do.
+            agent_name:   Short snake_case name, e.g. "email_outreach".
+            capabilities: Optional list of specific skills the agent should have.
+            config:       Optional config passed to the spawned agent.
+
+        Returns:
+            A running instance of the newly generated agent.
+        """
+        from agents.coding_agent import CodingAgent
+
+        # Step 1 — Generate the agent source file via CodingAgent
+        logger.info(f"Generating new agent '{agent_name}' for use case: {use_case}")
+        coder = CodingAgent(agent_id=f"meta_coder_{uuid.uuid4().hex[:8]}", llm=self.llm)
+        result = coder.execute_task({
+            "type": "generate_agent",
+            "use_case": use_case,
+            "agent_name": agent_name,
+            "capabilities": capabilities or [],
+        })
+
+        if result.get("status") != "success":
+            raise RuntimeError(f"CodingAgent failed to generate agent: {result}")
+
+        file_path: str = result["file_path"]
+        class_name: str = result["class_name"]
+        logger.info(f"Agent source written to {file_path}")
+
+        # Step 2 — Dynamically load the module
+        module_name = f"agents.{agent_name}_agent"
+        spec = importlib.util.spec_from_file_location(module_name, file_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Cannot load module from {file_path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+
+        # Step 3 — Find the generated class (subclass of BaseAgent)
+        agent_class: Optional[Type[BaseAgent]] = None
+        for _, obj in inspect.getmembers(module, inspect.isclass):
+            if issubclass(obj, BaseAgent) and obj is not BaseAgent:
+                agent_class = obj
+                break
+
+        if agent_class is None:
+            raise ImportError(
+                f"No BaseAgent subclass found in generated file: {file_path}"
+            )
+
+        # Step 4 — Register and spawn
+        self.register_agent_type(agent_name, agent_class)
+        agent_id = f"agent_{agent_name}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
+        agent = agent_class(
+            agent_id=agent_id,
+            llm=self.llm,
+            memory=None,
+            tools=self._get_tools_for_agent(agent_name),
+            config=config,
+        )
+        self._inject_dependencies(agent)
+        self._active_agents[agent_id] = agent
+        agent.start()
+
+        logger.info(f"Dynamic agent '{class_name}' spawned with ID: {agent_id}")
+        return agent
