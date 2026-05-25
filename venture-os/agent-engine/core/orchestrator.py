@@ -433,13 +433,6 @@ class Orchestrator:
         return {
             "agent_id": agent_id,
             "agent_type": getattr(agent, "agent_type", "unknown"),
-
-def execute(self):
-    raise NotImplementedError
-
-
-            "state": str(getattr(agent, "state", "unknown")),
-            "result": self._agent_results.get(agent_id),
         }
 
     def track_active_agents(self) -> None:
@@ -883,6 +876,18 @@ def execute(self):
         if hasattr(self.tool_registry, "get_all_tools"):
             return self.tool_registry.get_all_tools()
         return []
+
+    # def _register_default_tools(self) -> None:
+    # web_search = WebSearch(config=self.config.get("web_search", {}))
+    # self.tool_registry.register(
+    #     ToolDefinition(name="web_search", description="Search the web", ...),
+    #     handler=web_search.search          # ← pointing to the existing method
+    # )
+    # scraper = Scraper()
+    # self.tool_registry.register(
+    #     ToolDefinition(name="scrape_url", ...),
+    #     handler=scraper.scrape             # ← existing method
+    # )
 
     def execute_tool(self, tool_name: str, args: Dict[str, Any]) -> Any:
         """Execute tool via tool executor with safety checks."""

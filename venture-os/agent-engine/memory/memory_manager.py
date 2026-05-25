@@ -1,6 +1,6 @@
 # Central memory coordinator
 from typing import Any, Dict, List, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 
@@ -34,7 +34,7 @@ class MemoryEntry:
     created_at: datetime
     updated_at: datetime
     expires_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = field(default_factory=dict)
     embedding: Optional[List[float]] = None
 
 
@@ -74,9 +74,12 @@ class MemoryManager:
     def health_check(self) -> Dict[str, bool]:
         """Check health of all stores."""
         result = {
-            "cache_store": self._cache_store is not None and getattr(self._cache_store, "is_connected", lambda: False)(),
-            "vector_store": self._vector_store is not None and getattr(self._vector_store, "is_connected", lambda: False)(),
-            "structured_store": self._structured_store is not None and getattr(self._structured_store, "is_connected", lambda: False)(),
+            "cache_store": self._cache_store is not None
+            and getattr(self._cache_store, "is_connected", lambda: False)(),
+            "vector_store": self._vector_store is not None
+            and getattr(self._vector_store, "is_connected", lambda: False)(),
+            "structured_store": self._structured_store is not None
+            and getattr(self._structured_store, "is_connected", lambda: False)(),
             "audit_log": self._audit_log is not None,
         }
         return result
@@ -98,7 +101,9 @@ class MemoryManager:
             return self.store_in_vector(key, value)
         if memory_type in (MemoryType.LONG_TERM, MemoryType.EPISODIC):
             if self._structured_store:
-                return self.store_in_structured("memory", {"key": key, "value": str(value), **(metadata or {})})
+                return self.store_in_structured(
+                    "memory", {"key": key, "value": str(value), **(metadata or {})}
+                )
         # Fall back to cache
         return self.store_in_cache(key, value, ttl=ttl)
 
@@ -141,7 +146,9 @@ class MemoryManager:
         if self._cache_store and self._cache_store.exists(key):
             return self._cache_store.set(key, value)
         if self._structured_store:
-            count = self._structured_store.update("memory", {"value": str(value)}, {"key": key})
+            count = self._structured_store.update(
+                "memory", {"value": str(value)}, {"key": key}
+            )
             return count > 0
         return False
 
@@ -207,16 +214,18 @@ class MemoryManager:
         results = []
         if self._vector_store:
             for sr in self._vector_store.search_by_text(query, top_k=limit):
-                results.append(MemoryEntry(
-                    key=sr.id,
-                    value=sr.metadata.get("value") if sr.metadata else None,
-                    memory_type=memory_type or MemoryType.SEMANTIC,
-                    tier=MemoryTier.VECTOR,
-                    created_at=datetime.now(),
-                    updated_at=datetime.now(),
-                    metadata=sr.metadata or {},
-                    embedding=sr.vector,
-                ))
+                results.append(
+                    MemoryEntry(
+                        key=sr.id,
+                        value=sr.metadata.get("value") if sr.metadata else None,
+                        memory_type=memory_type or MemoryType.SEMANTIC,
+                        tier=MemoryTier.VECTOR,
+                        created_at=datetime.now(),
+                        updated_at=datetime.now(),
+                        metadata=sr.metadata or {},
+                        embedding=sr.vector,
+                    )
+                )
         return results[:limit]
 
     def semantic_search(self, query: str, limit: int = 10) -> List[MemoryEntry]:
@@ -231,16 +240,20 @@ class MemoryManager:
             results = []
             for ns in self._vector_store.list_namespaces():
                 for entry in list(self._vector_store._store.get(ns, {}).values()):
-                    if all(entry.metadata.get(k) == v for k, v in metadata_filter.items()):
-                        results.append(MemoryEntry(
-                            key=entry.id,
-                            value=entry.metadata.get("value"),
-                            memory_type=MemoryType.SEMANTIC,
-                            tier=MemoryTier.VECTOR,
-                            created_at=entry.created_at,
-                            updated_at=entry.created_at,
-                            metadata=entry.metadata,
-                        ))
+                    if all(
+                        entry.metadata.get(k) == v for k, v in metadata_filter.items()
+                    ):
+                        results.append(
+                            MemoryEntry(
+                                key=entry.id,
+                                value=entry.metadata.get("value"),
+                                memory_type=MemoryType.SEMANTIC,
+                                tier=MemoryTier.VECTOR,
+                                created_at=entry.created_at,
+                                updated_at=entry.created_at,
+                                metadata=entry.metadata,
+                            )
+                        )
                         if len(results) >= limit:
                             return results
         return []
@@ -252,15 +265,17 @@ class MemoryManager:
             for ns in self._vector_store.list_namespaces():
                 for entry in self._vector_store._store.get(ns, {}).values():
                     if start <= entry.created_at <= end:
-                        results.append(MemoryEntry(
-                            key=entry.id,
-                            value=entry.metadata.get("value"),
-                            memory_type=MemoryType.SEMANTIC,
-                            tier=MemoryTier.VECTOR,
-                            created_at=entry.created_at,
-                            updated_at=entry.created_at,
-                            metadata=entry.metadata,
-                        ))
+                        results.append(
+                            MemoryEntry(
+                                key=entry.id,
+                                value=entry.metadata.get("value"),
+                                memory_type=MemoryType.SEMANTIC,
+                                tier=MemoryTier.VECTOR,
+                                created_at=entry.created_at,
+                                updated_at=entry.created_at,
+                                metadata=entry.metadata,
+                            )
+                        )
             return results
         return []
 
@@ -325,10 +340,7 @@ class MemoryManager:
     def search_history(self, agent_id: str, query: str) -> List[Dict[str, Any]]:
         """Search agent history."""
         q = query.lower()
-        return [
-            h for h in self.get_history(agent_id)
-            if q in str(h).lower()
-        ]
+        return [h for h in self.get_history(agent_id) if q in str(h).lower()]
 
     # ==================== Batch Operations ====================
 
@@ -336,7 +348,8 @@ class MemoryManager:
         """Store multiple entries."""
         return {
             e["key"]: self.store(
-                e["key"], e["value"],
+                e["key"],
+                e["value"],
                 memory_type=e.get("memory_type", MemoryType.SHORT_TERM),
                 ttl=e.get("ttl"),
                 metadata=e.get("metadata"),
@@ -358,29 +371,56 @@ class MemoryManager:
         """Get memory statistics."""
         stats: Dict[str, Any] = {}
         if self._cache_store:
-            stats["cache"] = self._cache_store.get_stats() if hasattr(self._cache_store, "get_stats") else {}
+            stats["cache"] = (
+                self._cache_store.get_stats()
+                if hasattr(self._cache_store, "get_stats")
+                else {}
+            )
         if self._vector_store:
-            stats["vector"] = self._vector_store.get_stats() if hasattr(self._vector_store, "get_stats") else {}
+            stats["vector"] = (
+                self._vector_store.get_stats()
+                if hasattr(self._vector_store, "get_stats")
+                else {}
+            )
         if self._structured_store:
-            stats["structured"] = self._structured_store.get_stats() if hasattr(self._structured_store, "get_stats") else {}
+            stats["structured"] = (
+                self._structured_store.get_stats()
+                if hasattr(self._structured_store, "get_stats")
+                else {}
+            )
         return stats
 
     def get_tier_stats(self, tier: MemoryTier) -> Dict[str, Any]:
         """Get tier-specific statistics."""
         if tier == MemoryTier.CACHE and self._cache_store:
-            return self._cache_store.get_stats() if hasattr(self._cache_store, "get_stats") else {}
+            return (
+                self._cache_store.get_stats()
+                if hasattr(self._cache_store, "get_stats")
+                else {}
+            )
         if tier == MemoryTier.VECTOR and self._vector_store:
-            return self._vector_store.get_stats() if hasattr(self._vector_store, "get_stats") else {}
+            return (
+                self._vector_store.get_stats()
+                if hasattr(self._vector_store, "get_stats")
+                else {}
+            )
         if tier == MemoryTier.STRUCTURED and self._structured_store:
-            return self._structured_store.get_stats() if hasattr(self._structured_store, "get_stats") else {}
+            return (
+                self._structured_store.get_stats()
+                if hasattr(self._structured_store, "get_stats")
+                else {}
+            )
         return {}
 
     def cleanup_expired(self) -> int:
         """Cleanup expired entries. Returns count removed."""
         if self._cache_store and hasattr(self._cache_store, "_local_cache"):
             expired = [
-                k for k, e in list(self._cache_store._local_cache.items())
-                if hasattr(e, "expires_at") and e.expires_at and datetime.utcnow() > e.expires_at
+                k
+                for k, e in list(self._cache_store._local_cache.items())
+                if hasattr(e, "expires_at")
+                and e.expires_at
+                and datetime.utcnow() > e.expires_at
             ]
             for k in expired:
                 del self._cache_store._local_cache[k]
