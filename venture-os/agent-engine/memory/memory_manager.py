@@ -1,6 +1,6 @@
 # Central memory coordinator
 from typing import Any, Dict, List, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 
@@ -34,7 +34,7 @@ class MemoryEntry:
     created_at: datetime
     updated_at: datetime
     expires_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = field(default_factory=dict)
     embedding: Optional[List[float]] = None
 
 

@@ -1,12 +1,18 @@
 # Meta-Agent: orchestrates all agents
 import json
 import logging
+from typing import Any, Dict, List, Optional
 from core.agent_factory import AgentFactory
 from .llm_class import LLM
+
+logger = logging.getLogger(__name__)
 
 
 class Meta_agent:
     def __init__(self, llm: LLM) -> None:
+        """Responsible for goal analysis and agent roster planning.
+        All execution — spawning, running tasks, reporting — is handled by the Orchestrator.
+        """
         self.llm = llm
 
     def analyze_user_requirement(self, user_input: str):
@@ -32,8 +38,54 @@ class Meta_agent:
             keep all the attributes as is , as I will be using them to create task graph and spawn base agents. the primary goal is the main objective that the user wants to achieve. the domain is the specific area or industry related to the primary goal. constraints are any limitations or restrictions that need to be considered while achieving the primary goal. required capabilities are the skills, knowledge, or resources needed to accomplish the primary goal. complexity level indicates how difficult it is to achieve the primary goal, which can be categorized as low, medium, or high.
         """
         response = self.llm.invoke(prompt, system_prompt)
-        parsed_response = json.loads(response) if response else {}
+        if not response:
+            return {}
+        cleaned = response.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("```")[1]
+            if cleaned.startswith("json"):
+                cleaned = cleaned[4:]
+        parsed_response = json.loads(cleaned.strip())
         return parsed_response
+
+    def _plan_agent_roster(self, analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Ask the LLM to map required capabilities to concrete agent definitions.
+
+        Returns a list of dicts, each with:
+            agent_name   : snake_case identifier
+            use_case     : 1-2 sentence description
+            capabilities : list of method signatures e.g. "draft_email(recipient_info)"
+            tasks        : list of concrete task dicts to execute immediately
+        """
+        prompt = (
+            f"Given this goal analysis:\n{json.dumps(analysis, indent=2)}\n\n"
+            "Design a roster of EXACTLY 3 to 5 specialized AI agents to accomplish this goal. "
+            "Pick the most impactful capabilities — do not pad the list. "
+            "For each agent, provide these fields:\n"
+            "  agent_name   : short snake_case name (no spaces)\n"
+            "  use_case     : 1-2 sentence plain-English description\n"
+            "  capabilities : list of method signatures e.g. [\"analyze_market_trends(market_data)\", ...]\n"
+            "  tasks        : list of 1-2 concrete task dicts. "
+            "IMPORTANT: each task dict MUST have a \"type\" key whose value is the capability name "
+            "EXACTLY as it appears before the opening parenthesis "
+            "(e.g. if capability is \"analyze_market_trends(market_data)\", then type must be "
+            "\"analyze_market_trends\"). Include any other relevant keys the task needs.\n\n"
+            "Return ONLY a valid JSON array with no markdown fences."
+        )
+        system = (
+            "You are an AI system architect. "
+            "Output only a valid JSON array, no explanation, no markdown."
+        )
+        response = self.llm.invoke(prompt, system)
+        cleaned = response.strip()
+        if cleaned.startswith("```"):
+            # strip ```json ... ``` fences
+            cleaned = cleaned.split("```")[1]
+            if cleaned.startswith("json"):
+                cleaned = cleaned[4:]
+        return json.loads(cleaned.strip())
+
+    # ==================== Goal Decomposition ====================
 
     def decompose_goals(self, response: dict):
         """_summary_
