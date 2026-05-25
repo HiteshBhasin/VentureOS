@@ -1,18 +1,21 @@
 """FastAPI entry point for VentureOS Agent Engine."""
 
-import asyncio
-import time
-import uuid
+import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 
+from .middleware.auth import AuthMiddleware
 from .routes.agent_routes import router as agent_router
+from .routes.auth_routes import router as auth_router
+from .routes.memory_routes import router as memory_router
 from .routes.task_routes import router as task_router
-from .routes.system_routes import router as system_router
+
+# Comma-separated list of allowed origins in .env, e.g.:
+# ALLOWED_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
 
 app = FastAPI(
     title="VentureOS Agent Engine",
@@ -20,17 +23,20 @@ app = FastAPI(
     description="Orchestration backend for VentureOS agents and tasks",
 )
 
+# Order matters: CORS must be added before AuthMiddleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(AuthMiddleware)
 
+app.include_router(auth_router, prefix="/api/v1")
 app.include_router(agent_router, prefix="/api/v1")
 app.include_router(task_router, prefix="/api/v1")
-app.include_router(system_router, prefix="/api/v1")
+app.include_router(memory_router, prefix="/api/v1")
 
 
 @app.get("/health")
@@ -41,16 +47,3 @@ def health_check() -> Dict[str, Any]:
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-
-# Application instance
-app: FastAPI = None
-
-
-def init_app() -> FastAPI:
-    """Initialize application."""
-    pass
-
-
-def run_server(host: str = "0.0.0.0", port: int = 8000, reload: bool = False) -> None:
-    """Run the application server."""
-    pass

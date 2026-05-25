@@ -10,7 +10,7 @@ httpx
 uvicorn[standard]
 slowapi
 pypdf
-pymongo
+psycopg2
 pytest
 pytest-asyncio
 pyngrok
@@ -20,13 +20,19 @@ pandas
 matplotlib
 numpy
 scikit-learn
-anthropic #using claude for this.
-redis
-sqlalchemy 
 fastapi-mail
-openai
 tiktoken
 # ---------------security----------
 pyOTP
 two-fast-auth
 qrcode
+#----------------database---------------
+supabase
+sqlalchemy 
+redis
+pymongo
+#----------------AI---------------
+cohere
+mastral
+openai
+anthropic #using claude for this.
