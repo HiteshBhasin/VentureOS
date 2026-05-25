@@ -1,16 +1,16 @@
-
 from dotenv import load_dotenv
 import os
 
 # Cohere models removed after Sep 2025 → current replacements
 _COHERE_ALIASES: dict[str, str] = {
     "command-r-plus": "command-a-03-2025",
-    "command-r":      "command-r7b-12-2024",
-    "command":        "command-a-03-2025",
-    "command-light":  "command-r7b-12-2024",
+    "command-r": "command-r7b-12-2024",
+    "command": "command-a-03-2025",
+    "command-light": "command-r7b-12-2024",
 }
 
 
+# instead of if else statment we can use factory pattern to create the llm client based on the model name
 class LLM:
     def __init__(self, model: str, temperature: float = 0.7) -> None:
         """Initialize the LLM class with the specified model and temperature."""
@@ -21,6 +21,7 @@ class LLM:
 
         if model.startswith("gpt-") or model.startswith("o1") or model.startswith("o3"):
             from openai import OpenAI
+
             self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
             self.provider = "openai"
 
@@ -48,7 +49,9 @@ class LLM:
             # Remap any deprecated model names automatically
             resolved = _COHERE_ALIASES.get(model, model)
             if resolved != model:
-                print(f"[LLM] Cohere model '{model}' was removed — using '{resolved}' instead.")
+                print(
+                    f"[LLM] Cohere model '{model}' was removed — using '{resolved}' instead."
+                )
                 self.model = resolved
             self.client = cohere.ClientV2(api_key=os.getenv("COHERE_API_KEY"))
             self.provider = "cohere"

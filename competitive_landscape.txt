@@ -1,0 +1,195 @@
+================================================================================
+  VentureOS / AEF — Competitive Landscape Analysis
+  Date: May 25, 2026
+================================================================================
+
+
+WHAT VENTUREOS ACTUALLY IS
+---------------------------
+An Autonomous Enterprise Framework: user inputs a business goal (e.g., "Launch
+AI marketing agency"), a Meta-Agent decomposes it into a task graph (DAG),
+spawns specialized agents (research, coding, review, runtime), executes with
+tools (web search, scraper, financial APIs, code executor), and persists
+everything in a tiered memory system (vector + PostgreSQL + Redis). Built as a
+multi-tenant SaaS with a Next.js dashboard.
+
+The angle is running an entire venture autonomously — not automating a workflow,
+but executing a business objective end-to-end.
+
+
+================================================================================
+  THE COMPETITIVE MAP
+================================================================================
+
+
+TIER 1 — CLOSEST COMPETITORS (MULTI-AGENT BUSINESS AUTOMATION)
+----------------------------------------------------------------
+
+Relevance AI (relevanceai.com)
+  What it does   : No-code multi-agent platform for GTM teams (sales/marketing).
+                   L1-L4 autonomy ladder, 1,000+ integrations, enterprise
+                   governance (RBAC, OTEL, PII masking).
+                   Customers: KPMG, Canva, Autodesk.
+  Funding/Scale  : Series B, ~$15M+ raised
+  Weakness vs us : Locked to GTM workflows. No code execution. No financial
+                   intelligence. Agents handle tasks, not ventures. Very
+                   enterprise sales-heavy.
+
+Lindy AI (lindy.ai)
+  What it does   : Personal AI executive assistant — email, calendar, meetings.
+                   $49/month.
+  Funding/Scale  : Well-funded, consumer-focused
+  Weakness vs us : Single-function, single-user. No goal decomposition at all.
+
+Zapier AI Agents (zapier.com)
+  What it does   : Workflow automation + AI agents across 7,000+ integrations
+  Funding/Scale  : Large, established
+  Weakness vs us : Linear trigger/action model. No DAG. No research or coding
+                   agents.
+
+n8n (n8n.io)
+  What it does   : Open-source workflow automation, code-node support
+  Funding/Scale  : Open-source / VC-backed
+  Weakness vs us : Developer-only, no meta-agent goal decomposition.
+
+
+TIER 2 — ENTERPRISE AGENT PLATFORMS (INDIRECT)
+------------------------------------------------
+
+Salesforce Agentforce
+  Lock-in        : Salesforce ecosystem
+  Weakness       : CRM-only, enterprise pricing, no venture thinking
+
+Microsoft Copilot Studio
+  Lock-in        : Microsoft 365
+  Weakness       : Enterprise-locked, no autonomous execution
+
+ServiceNow AI
+  Lock-in        : IT/HR workflows
+  Weakness       : Vertically locked, no general-purpose goal execution
+
+
+TIER 3 — OPEN-SOURCE / DEVELOPER FRAMEWORKS
+--------------------------------------------
+
+CrewAI
+  What it is     : Python multi-agent framework
+  Why different  : No SaaS, no UI, pure code library. Requires full dev setup.
+
+LangGraph (LangChain)
+  What it is     : Stateful agent graphs (LangChain)
+  Why different  : No UI, pure framework, no memory system, no financial tools.
+
+AutoGPT
+  What it is     : Original autonomous agent (GitHub)
+  Why different  : Largely stagnated, now mainly a media/content site.
+
+BabyAGI / AgentGPT
+  What it is     : Early task-chaining demos
+  Why different  : Not productized, no tooling depth, no multi-agent support.
+
+
+================================================================================
+  WHERE VENTUREOS IS GENUINELY DIFFERENT
+================================================================================
+
+1. VENTURE-NATIVE GOAL DECOMPOSITION
+   Every competitor either automates existing workflows (Zapier, Relevance AI)
+   or handles point tasks (Lindy). VentureOS takes a raw business objective and
+   autonomously plans + executes the full path to it. That is a different
+   conceptual level entirely.
+
+2. CODE EXECUTION INSIDE THE AGENT LOOP
+   code_executor.py is a real differentiator. If a venture needs a prototype,
+   a scraper, a data pipeline, or a pricing model — VentureOS agents can write
+   and run code as part of achieving the goal. No business-automation competitor
+   does this.
+
+3. FINANCIAL INTELLIGENCE AS FIRST-CLASS TOOLING
+   financial_api.py handles real-time quotes, OHLCV data, company fundamentals,
+   multi-market types (stocks, crypto, forex, commodities). This is completely
+   absent from Relevance AI, Lindy, and Zapier. It positions VentureOS
+   specifically for fintech ventures, investment research, and data-driven
+   business decisions natively.
+
+4. TRUE DAG TASK GRAPH VS. LINEAR WORKFLOWS
+   Topological sort, dependency tracking, parallel execution. Competitors use
+   linear trigger-action chains or simple step sequences. VentureOS handles
+   complex interdependencies between tasks natively.
+
+5. LLM MODEL ROUTING
+   llm_router.py + model_config.py enables routing tasks to the optimal or
+   cheapest model per task. Relevance AI does this too, but most competitors
+   do not. Means real cost efficiency at scale.
+
+6. SELF-HOSTABLE, OPEN ARCHITECTURE
+   Docker + pyproject.toml + no vendor lock-in. Founders who cannot trust their
+   IP to a SaaS (fintech, legal, health) can deploy it themselves. This is a
+   major trust signal for technical founders.
+
+
+================================================================================
+  THE HONEST GAPS TO ADDRESS
+================================================================================
+
+Gap                       | Why It Matters                    | Suggested Path
+--------------------------|-----------------------------------|-----------------------------------
+Zero native integrations  | Relevance AI has 1,000+. Cannot   | Prioritize top 5-10: Stripe,
+                          | connect to HubSpot, Notion,       | HubSpot, Gmail, Slack, Notion
+                          | Stripe natively.                  | before public launch.
+--------------------------|-----------------------------------|-----------------------------------
+No human-in-the-loop UI   | Relevance AI's biggest enterprise | Build task approval / pause
+                          | selling point is oversight:       | surfaces into the Next.js
+                          | approval gates, escalation.       | dashboard. audit_log.py is the
+                          | audit_log.py exists but has no    | backend — surface it in the UI.
+                          | dashboard surface.                |
+--------------------------|-----------------------------------|-----------------------------------
+Positioning is not sharp  | Is it for developers?             | Nail one vertical first:
+                          | Entrepreneurs? Fintech founders?  | "The AI co-founder for
+                          | The financial API suggests a      | fintech/startup builders"
+                          | specific niche but nothing        |
+                          | communicates it yet.              |
+--------------------------|-----------------------------------|-----------------------------------
+Relevance AI moving to L4 | Their roadmap converges with      | Move fast on code execution +
+autonomy                  | VentureOS's thesis. They have     | financial intelligence — that
+                          | more runway and integrations.     | is ground Relevance AI cannot
+                          |                                   | easily cover.
+
+
+================================================================================
+  POSITIONING RECOMMENDATION
+================================================================================
+
+The sharpest differentiation is the combination no one else has:
+
+  Goal decomposition + code execution + financial intelligence
+  = the only AI platform that can run the full stack of building
+    a data/fintech venture autonomously.
+
+That is a wedge. Everyone else is automating existing business processes.
+VentureOS is building something new from a goal.
+
+Potential tagline directions:
+  "Your AI co-founder. Give it a goal — it builds the business."
+  "AutoGPT for founders. Research, code, and execute any venture."
+  "The operating system for AI-native ventures."
+
+
+================================================================================
+  SUMMARY TABLE
+================================================================================
+
+Capability                   | VentureOS | Relevance AI | Lindy | Zapier | CrewAI
+-----------------------------|-----------|--------------|-------|--------|-------
+Goal → full execution loop   |    YES    |      NO      |  NO   |   NO   |  NO
+Multi-agent DAG              |    YES    |    PARTIAL   |  NO   |   NO   |  YES
+Code execution in agents     |    YES    |      NO      |  NO   |   NO   |  NO
+Financial API (stocks/crypto)|    YES    |      NO      |  NO   |   NO   |  NO
+Vector + structured memory   |    YES    |    PARTIAL   |  NO   |   NO   |  NO
+LLM model routing            |    YES    |      YES     |  NO   |   NO   |  NO
+No-code UI                   |    YES    |      YES     |  YES  |  YES   |  NO
+Native integrations (count)  |    ~0     |    1,000+    |  100+ | 7,000+ |  ~0
+Self-hostable                |    YES    |      NO      |  NO   |   NO   |  YES
+Enterprise governance/RBAC   |  PARTIAL  |      YES     |  YES  |  YES   |  NO
+
+================================================================================

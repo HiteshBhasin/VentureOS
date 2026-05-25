@@ -51,7 +51,9 @@ class Meta_agent:
                     {
                         "task_name": task,
                         "status": "pending",
+                        "agent_type": task,  # this can be used to determine which type of agent to spawn for this task
                         "assigned_agent": None,
+                        "status": "pending",
                         "dependencies": [],
                     }
                 )
@@ -69,35 +71,35 @@ class Meta_agent:
         task_graph = self._topological_sort(tasks)
         return task_graph
 
-    def spawn_base_agent(self, task):
-        """_summary_
+    # def spawn_base_agent(self, task):
+    #     """_summary_
 
-        Args:
-            task (_type_): _description_
+    #     Args:
+    #         task (_type_): _description_
 
-        Returns:
-            _type_: _description_
-        """
-        agent_factory = AgentFactory(self.llm)
-        agent = agent_factory.spawn_agent(task)
-        return agent
+    #     Returns:
+    #         _type_: _description_
+    #     """
+    #     agent_factory = AgentFactory(self.llm)
+    #     agent = agent_factory.spawn_agent(task)
+    #     return agent
 
-    def supervise(self, tasks):
-        for task in tasks:
-            if task["status"] == "pending" and self.depency_satified(task):
-                self.spawn_base_agent(task)
-                task["assigned_agent"] = "agent_id"  # assign the agent id to the task
-                task["status"] = "in progress"
-                task["dependencies"].append(
-                    task["task_name"]
-                )  # add the task name to the dependency list of other tasks
-            elif task["status"] == "in progress":
-                # check the status of the assigned agent and update the task status accordingly
-                agent_status = self.check_agent_status(task["assigned_agent"])
-                if agent_status == "completed":
-                    task["status"] = "completed"
-                elif agent_status == "failed":
-                    self.handle_failure(task)
+    # def supervise(self, tasks):
+    #     for task in tasks:
+    #         if task["status"] == "pending" and self.depency_satified(task):
+    #             self.spawn_base_agent(task)
+    #             task["assigned_agent"] = "agent_id"  # assign the agent id to the task
+    #             task["status"] = "in progress"
+    #             task["dependencies"].append(
+    #                 task["task_name"]
+    #             )  # add the task name to the dependency list of other tasks
+    #         elif task["status"] == "in progress":
+    #             # check the status of the assigned agent and update the task status accordingly
+    #             agent_status = self.check_agent_status(task["assigned_agent"])
+    #             if agent_status == "completed":
+    #                 task["status"] = "completed"
+    #             elif agent_status == "failed":
+    #                 self.handle_failure(task)
 
     def refine_strategy(self):
         """Re-analyze current task statuses and adjust strategy."""
@@ -110,13 +112,17 @@ class Meta_agent:
         for task in failed_tasks:
             task["status"] = "pending"
             task["assigned_agent"] = None
-            logging.info(f"Refining strategy: resetting failed task '{task['task_name']}' for retry")
+            logging.info(
+                f"Refining strategy: resetting failed task '{task['task_name']}' for retry"
+            )
         # Re-sort pending tasks by dependency order
         if pending_tasks:
             sorted_tasks = self._topological_sort(pending_tasks)
             for i, task in enumerate(sorted_tasks):
                 task["priority"] = i
-            logging.info(f"Refining strategy: re-prioritized {len(sorted_tasks)} pending tasks")
+            logging.info(
+                f"Refining strategy: re-prioritized {len(sorted_tasks)} pending tasks"
+            )
 
     def _topological_sort(self, tasks):
         """_summary_

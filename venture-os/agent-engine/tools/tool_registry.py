@@ -36,7 +36,7 @@ class ToolDefinition:
     description: str
     category: ToolCategory
     parameters: List[ToolParameter] = field(default_factory=list)
-    returns: str = "Any"
+    returns: Optional[Callable] = None
     returns_description: str = ""
     examples: List[Dict[str, Any]] = field(default_factory=list)
     requires_auth: bool = False
@@ -119,7 +119,9 @@ class ToolRegistry:
                         type=type_str,
                         description=f"Parameter {pname}",
                         required=p.default is inspect.Parameter.empty,
-                        default=None if p.default is inspect.Parameter.empty else p.default,
+                        default=(
+                            None if p.default is inspect.Parameter.empty else p.default
+                        ),
                     )
                 )
             definition = ToolDefinition(
@@ -381,7 +383,9 @@ class ToolRegistry:
             "total_tools": len(self._tools),
             "enabled_tools": sum(1 for t in self._tools.values() if t.enabled),
             "disabled_tools": sum(1 for t in self._tools.values() if not t.enabled),
-            "categories": {cat.value: count for cat, count in self.get_category_counts().items()},
+            "categories": {
+                cat.value: count for cat, count in self.get_category_counts().items()
+            },
         }
 
     def get_category_counts(self) -> Dict[ToolCategory, int]:
@@ -473,10 +477,28 @@ class ToolRegistry:
                     if tool.parameters:
                         lines.append("**Parameters:**\n")
                         for p in tool.parameters:
-                            req = "required" if p.required else f"optional, default: `{p.default}`"
-                            lines.append(f"- `{p.name}` ({p.type}, {req}): {p.description}")
+                            req = (
+                                "required"
+                                if p.required
+                                else f"optional, default: `{p.default}`"
+                            )
+                            lines.append(
+                                f"- `{p.name}` ({p.type}, {req}): {p.description}"
+                            )
                     lines.append("")
         else:
             for tool in self._tools.values():
                 lines.append(f"{tool.name}: {tool.description}")
         return "\n".join(lines)
+
+    # ---------------------------------------------Tool Execution & ---------------------------------------------
+    def execute(self, tool_name: str, args: Dict[str, Any]) -> Any:
+        """Execute a tool by name with given arguments."""
+        if not self.validate_input(tool_name, args)["valid"]:
+            raise ValueError(f"Invalid tool invocation: {tool_name}")
+
+        tool = self.get_tool(tool_name)
+        if not tool or not tool.enabled:
+            raise RuntimeError(f"Tool '{tool_name}' is not available or enabled")
+
+        return tool.returns(**args) if tool.returns else None

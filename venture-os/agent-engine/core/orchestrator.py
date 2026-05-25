@@ -433,6 +433,11 @@ class Orchestrator:
         return {
             "agent_id": agent_id,
             "agent_type": getattr(agent, "agent_type", "unknown"),
+
+def execute(self):
+    raise NotImplementedError
+
+
             "state": str(getattr(agent, "state", "unknown")),
             "result": self._agent_results.get(agent_id),
         }
@@ -840,7 +845,13 @@ class Orchestrator:
     ) -> Any:
         """Route LLM request to appropriate model via router."""
         if self.llm_router and hasattr(self.llm_router, "route"):
-            return self.llm_router.route(prompt, model_preference=model_preference)
+            return self.llm_router.route(
+                request={
+                    "prompt": prompt,
+                    "model_preference": model_preference,
+                    "correlation_id": self.get_correlation_id(),
+                }
+            )
         return self.invoke_llm(prompt)
 
     def invoke_llm(
@@ -860,10 +871,10 @@ class Orchestrator:
 
     # ==================== TOOL MANAGEMENT ====================
 
-    def register_tool(self, tool: Any) -> None:
+    def register_tool(self, tool: Any, handler) -> None:
         """Register a tool with the tool registry."""
         if self.tool_registry:
-            self.tool_registry.register(tool)
+            self.tool_registry.register(tool, handler)
 
     def get_available_tools(self) -> List[Any]:
         """Get list of all available tools."""
