@@ -1,50 +1,52 @@
-# Meta-Agent: orchestrates all agents
+# Meta-Agent: goal analysis and agent roster planning only.
+# All execution (spawning, running tasks, reporting) is handled by the Orchestrator.
 import json
 import logging
 from typing import Any, Dict, List, Optional
+
 from .llm_class import LLM
+from models.llm_router import LLMRouter, ModelCapability
 
 logger = logging.getLogger(__name__)
 
 
 class Meta_agent:
-    def __init__(self, llm: LLM) -> None:
-        """Responsible for goal analysis and agent roster planning.
+    def __init__(self, llm: LLM, llm_router: Optional[LLMRouter] = None) -> None:
+        """Responsible for goal analysis and agent roster planning only.
         All execution — spawning, running tasks, reporting — is handled by the Orchestrator.
-        """
-        self.llm = llm
-
-    def analyze_user_requirement(self, user_input: str):
-        """_summary_
 
         Args:
-            input (str): _description_
+            llm:        Default LLM instance used when no router is configured.
+            llm_router: Optional LLMRouter. When provided, each LLM call picks the
+                        best registered endpoint for the task's capability before invoking.
+        """
+        self.llm = llm
+        self.llm_router: Optional[LLMRouter] = llm_router
+
+    def analyze_user_requirement(self, user_input: str) -> Dict[str, Any]:
+        """Decompose a plain-English goal into a structured analysis dict.
+
+        Returns a dict with keys:
+            primary_goal, domain, constraints, required_capabilities, complexity_level
         """
         prompt = f"Analyze the user requirement and decompose it into smaller tasks: {user_input}"
-        system_prompt = """You are a helpful assistant that analyzes user requirements and decomposes them into smaller tasks. the output should be a list of tasks that can be executed by base agents. Each task should be concise and actionable. the pattern should in json format : example=
-        {
-            "primary_goal": "Launch AI marketing agency",
-            "domain": "Digital Marketing",
-            "constraints": ["domestic and global markets"],
-            "required_capabilities": [
-                "market research",
-                "service definition",
-                "pricing strategy",
-                "customer acquisition strategy"
-            ],
-            "complexity_level": "medium"
-            }
-            keep all the attributes as is , as I will be using them to create task graph and spawn base agents. the primary goal is the main objective that the user wants to achieve. the domain is the specific area or industry related to the primary goal. constraints are any limitations or restrictions that need to be considered while achieving the primary goal. required capabilities are the skills, knowledge, or resources needed to accomplish the primary goal. complexity level indicates how difficult it is to achieve the primary goal, which can be categorized as low, medium, or high.
-        """
-        response = self.llm.invoke(prompt, system_prompt)
+        system_prompt = (
+            "You are a helpful assistant that analyzes user requirements and decomposes them "
+            "into smaller tasks. Return ONLY valid JSON with this exact structure:\n"
+            "{\n"
+            '  "primary_goal": "...",\n'
+            '  "domain": "...",\n'
+            '  "constraints": ["..."],\n'
+            '  "required_capabilities": ["...", "..."],\n'
+            '  "complexity_level": "low|medium|high"\n'
+            "}\n"
+            "No markdown, no explanation — JSON only."
+        )
+        llm = self._get_llm_for_task(ModelCapability.REASONING)
+        response = llm.invoke(prompt, system_prompt)
         if not response:
-            return {}
-        cleaned = response.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.split("```")[1]
-            if cleaned.startswith("json"):
-                cleaned = cleaned[4:]
-        return json.loads(cleaned.strip())
+            raise ValueError("LLM returned empty response for requirement analysis")
+        return self._parse_json_response(response)
 
     def _plan_agent_roster(self, analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Ask the LLM to map required capabilities to concrete agent definitions.
@@ -74,35 +76,26 @@ class Meta_agent:
             "You are an AI system architect. "
             "Output only a valid JSON array, no explanation, no markdown."
         )
-        response = self.llm.invoke(prompt, system)
-
-        cleaned = response.strip()
-        if cleaned.startswith("```"):
-            # strip ```json ... ``` fences
-            cleaned = cleaned.split("```")[1]
-            if cleaned.startswith("json"):
-                cleaned = cleaned[4:]
-        return json.loads(cleaned.strip())
+        llm = self._get_llm_for_task(ModelCapability.REASONING)
+        response = llm.invoke(prompt, system)
+        if not response:
+            raise ValueError("LLM returned empty response for roster planning")
+        result = self._parse_json_response(response)
+        if not isinstance(result, list):
+            raise ValueError(f"Expected a JSON array from roster planning, got: {type(result)}")
+        return result
 
     # ==================== Goal Decomposition ====================
 
-    def decompose_goals(self, response: dict):
-        """_summary_
-
-        Args:
-            response (dict): parsed response from analyze_user_requirement
-
-        Returns:
-            _type_: _description_
-        """
+    def decompose_goals(self, analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Convert the analysis's required_capabilities into a flat task list."""
         tasks = []
-        if isinstance(response, dict) and "required_capabilities" in response:
-            for task in response["required_capabilities"]:
+        if isinstance(analysis, dict) and "required_capabilities" in analysis:
+            for capability in analysis["required_capabilities"]:
                 tasks.append(
                     {
-                        "task_name": task,
-                        "status": "pending",
-                        "agent_type": task,  # this can be used to determine which type of agent to spawn for this task
+                        "task_name": capability,
+                        "agent_type": capability,
                         "assigned_agent": None,
                         "status": "pending",
                         "dependencies": [],
@@ -110,112 +103,70 @@ class Meta_agent:
                 )
         return tasks
 
-    def create_task_graph(self, tasks):
+    def create_task_graph(self, tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Return tasks sorted in topological dependency order."""
+        return self._topological_sort(tasks)
+
+    # ==================== Internal Helpers ====================
+
+    def _get_llm_for_task(self, capability: Optional[ModelCapability] = None) -> LLM:
+        """Return the best LLM for this task using the router, or fall back to self.llm.
+
+        If a router is configured and has registered endpoints, it picks the endpoint
+        whose capability matches (or the cheapest available endpoint as a default).
+        A fresh LLM instance is created from the selected endpoint's model_id so the
+        right provider is used for this specific call.
         """
-        you would need to analyze the dependencies between tasks and create a more complex graph
-        Args:
-            tasks (_type_): taks list
-        Returns:
-            _type_: task graph whch is a list of tasks sorted in topological order based on their dependencies
-        """
-        # .
-        task_graph = self._topological_sort(tasks)
-        return task_graph
+        if not self.llm_router:
+            return self.llm
+        try:
+            if capability:
+                decision = self.llm_router.route_by_capability(capability)
+            else:
+                decision = self.llm_router.route({})
+            endpoint = decision.endpoint
+            logger.debug(
+                f"LLMRouter selected '{endpoint.model_id}' "
+                f"(reason={decision.reason}, capability={capability})"
+            )
+            return LLM(model=endpoint.model_id, temperature=self.llm.temperature)
+        except Exception as exc:
+            logger.warning(f"LLMRouter failed ({exc}), falling back to default LLM")
+            return self.llm
 
-    # def spawn_base_agent(self, task):
-    #     """_summary_
+    def _topological_sort(self, tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Sort tasks so that all dependencies appear before the tasks that need them."""
 
-    #     Args:
-    #         task (_type_): _description_
+        task_map = {t["task_name"]: t for t in tasks}
+        visited: set = set()
+        stack: List[Dict[str, Any]] = []
 
-    #     Returns:
-    #         _type_: _description_
-    #     """
-    #     agent_factory = AgentFactory(self.llm)
-    #     agent = agent_factory.spawn_agent(task)
-    #     return agent
-
-    # def supervise(self, tasks):
-    #     for task in tasks:
-    #         if task["status"] == "pending" and self.depency_satified(task):
-    #             self.spawn_base_agent(task)
-    #             task["assigned_agent"] = "agent_id"  # assign the agent id to the task
-    #             task["status"] = "in progress"
-    #             task["dependencies"].append(
-    #                 task["task_name"]
-    #             )  # add the task name to the dependency list of other tasks
-    #         elif task["status"] == "in progress":
-    #             # check the status of the assigned agent and update the task status accordingly
-    #             agent_status = self.check_agent_status(task["assigned_agent"])
-    #             if agent_status == "completed":
-    #                 task["status"] = "completed"
-    #             elif agent_status == "failed":
-    #                 self.handle_failure(task)
-
-    # def refine_strategy(self):
-    #     """Re-analyze current task statuses and adjust strategy."""
-    #     all_tasks = getattr(self, "_tasks", [])
-    #     if not all_tasks:
-    #         return
-    #     failed_tasks = [t for t in all_tasks if t.get("status") == "failed"]
-    #     pending_tasks = [t for t in all_tasks if t.get("status") == "pending"]
-    #     # Reset failed tasks for retry
-    #     for task in failed_tasks:
-    #         task["status"] = "pending"
-    #         task["assigned_agent"] = None
-    #         logging.info(
-    #             f"Refining strategy: resetting failed task '{task['task_name']}' for retry"
-    #         )
-    #     # Re-sort pending tasks by dependency order
-    #     if pending_tasks:
-    #         sorted_tasks = self._topological_sort(pending_tasks)
-    #         for i, task in enumerate(sorted_tasks):
-    #             task["priority"] = i
-    #         logging.info(
-    #             f"Refining strategy: re-prioritized {len(sorted_tasks)} pending tasks"
-    #         )
-
-    def _topological_sort(self, tasks):
-        """_summary_
-
-        Args:
-            tasks (_type_): _description_
-
-        Returns:
-            _type_: _description_
-        """
-
-        def dfs(task, visited: set, stack: list):
+        def dfs(task: Dict[str, Any]) -> None:
             visited.add(task["task_name"])
-            for dep in task["dependencies"]:
-                if dep not in visited:
-                    dfs(dep, visited, stack)
+            for dep_name in task.get("dependencies", []):
+                if dep_name not in visited and dep_name in task_map:
+                    dfs(task_map[dep_name])
             stack.append(task)
 
-    #     visited = set()
-    #     stack = []
-    #     for task in tasks:
-    #         if task["task_name"] not in visited:
-    #             dfs(task, visited, stack)
-    #     return stack[::-1]
+        for task in tasks:
+            if task["task_name"] not in visited:
+                dfs(task)
 
-    # def depency_satified(self, task: list):
-    #     # check if all dependencies of the task are completed
-    #     for dep in task["dependencies"]:
-    #         if dep["status"] != "completed":
-    #             return False
-    #     return True
+        return stack[::-1]
 
-    # def check_agent_status(self, agent_id):
-    #     # check the status of the assigned agent
-    #     if agent_id:
-    #         # logic to check agent status
-    #         return "completed"  # or "failed"
-    #     return "pending"
+    @staticmethod
+    def _parse_json_response(response: str) -> Any:
+        """Strip markdown fences if present, then parse and return JSON."""
+        cleaned = response.strip()
+        if cleaned.startswith("```"):
+            parts = cleaned.split("```")
+            cleaned = parts[1]  # content between first pair of fences
+            if cleaned.startswith("json"):
+                cleaned = cleaned[4:]
+        try:
+            return json.loads(cleaned.strip())
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"LLM response is not valid JSON: {exc}\nRaw response:\n{response[:500]}"
+            ) from exc
 
-    # def handle_failure(self, task):
-    #     # logic to handle task failure, such as retrying or reassigning the task
-    #     if task["status"] == "failed":
-    #         task["status"] = "pending"
-    #         task["assigned_agent"] = None
-    #         logging.info(f"Task {task['task_name']} failed. Retrying...")
