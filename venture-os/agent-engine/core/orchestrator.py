@@ -1,5 +1,6 @@
 # Task scheduling & coordination
 from typing import Any, Dict, List, Optional
+import json
 import uuid
 import logging
 
@@ -22,6 +23,14 @@ from agents.review_agent import ReviewAgent
 from agents.runtime_agent import RuntimeAgent
 
 logger = logging.getLogger(__name__)
+
+# Maps agent type → the most general task type that agent accepts
+_AGENT_DEFAULT_TASK = {
+    "research": "generate_report",
+    "coding":   "generate_code",
+    "review":   "review_code",
+    "runtime":  "run_code",
+}
 
 
 class Orchestrator:
@@ -239,28 +248,95 @@ class Orchestrator:
     # ==================== REQUEST PROCESSING ====================
 
     def process_user_request(self, user_input: str) -> Dict[str, Any]:
-        """Main entry point: parse input, decompose into tasks, create task graph, return plan."""
+        """Backbone entry point — the Orchestrator owns every execution step:
+        1. Meta_agent analyses goal and plans the specialist roster.
+        2. Orchestrator spawns each specialist agent via AgentFactory.
+        3. Orchestrator executes every assigned task.
+        4. Orchestrator compiles the final comprehensive report.
+        """
         if not self.validate_user_input(user_input):
             return {"status": "error", "message": "Invalid or empty user input"}
 
         self._correlation_id = self.get_correlation_id()
-        logger.info(
-            f"Processing request [{self._correlation_id}]: {user_input[:80]}..."
-        )
+        logger.info(f"Processing request [{self._correlation_id}]: {user_input[:80]}...")
 
         try:
-            execution_plan = self.create_execution_plan(user_input)
-            results = self.execute_task_graph(self.task_graph)
-            report = self.generate_execution_report()
+            from .meta_agent import Meta_agent
+
+            # ── Step 1: Meta_agent analyses the goal and decides which agents are needed ──
+            meta = Meta_agent(llm=self.llm)
+            analysis = meta.analyze_user_requirement(user_input)
+            roster = meta._plan_agent_roster(analysis)
+            logger.info(
+                f"[{self._correlation_id}] Roster planned — "
+                f"{len(roster)} agents: {[r['agent_name'] for r in roster]}"
+            )
+
+            # ── Step 2: Orchestrator spawns every specialist agent ─────────────────────
+            if not self.agent_factory:
+                raise RuntimeError("AgentFactory not initialized")
+            spawned: Dict[str, Any] = {}
+            for spec in roster:
+                agent_name = spec["agent_name"]
+                try:
+                    agent = self.agent_factory.spawn_dynamic_agent(
+                        use_case=spec["use_case"],
+                        agent_name=agent_name,
+                        capabilities=spec.get("capabilities", []),
+                    )
+                    self.register_active_agent(agent)
+                    spawned[agent_name] = {"agent": agent, "tasks": spec.get("tasks", [])}
+                    logger.info(f"  Spawned {type(agent).__name__} (id={agent.agent_id})")
+                except Exception as exc:
+                    logger.error(f"  Failed to spawn '{agent_name}': {exc}")
+                    spawned[agent_name] = {"agent": None, "tasks": [], "error": str(exc)}
+
+            # ── Step 3: Orchestrator executes every assigned task ──────────────────────
+            all_results: Dict[str, Any] = {}
+            for agent_name, entry in spawned.items():
+                if entry.get("error"):
+                    all_results[agent_name] = {"status": "error", "error": entry["error"]}
+                    continue
+                agent = entry["agent"]
+                task_results = []
+                for task in entry["tasks"]:
+                    try:
+                        result = agent.execute_task(task)
+                        task_results.append({"task": task, "result": result})
+                        logger.info(
+                            f"  [{agent_name}] '{task.get('type')}' → {result.get('status')}"
+                        )
+                    except Exception as exc:
+                        logger.error(f"  [{agent_name}] '{task.get('type')}' failed: {exc}")
+                        task_results.append(
+                            {"task": task, "result": {"status": "error", "error": str(exc)}}
+                        )
+                all_results[agent_name] = {
+                    "agent_id": agent.agent_id,
+                    "agent_class": type(agent).__name__,
+                    "status": agent.status,
+                    "task_results": task_results,
+                }
+
+            # ── Step 4: Orchestrator compiles the final comprehensive report ───────────
+            report = self.compile_final_report(user_input, analysis, all_results)
+
             return {
                 "status": "success",
                 "correlation_id": self._correlation_id,
-                "plan": execution_plan,
-                "results": results,
+                "goal": user_input,
+                "analysis": analysis,
+                "agents_spawned": [
+                    e["agent"].agent_id for e in spawned.values() if e.get("agent")
+                ],
+                "agent_results": all_results,
                 "report": report,
             }
         except Exception as exc:
-            logger.error(f"Error processing request [{self._correlation_id}]: {exc}")
+            logger.error(
+                f"Error processing request [{self._correlation_id}]: {exc}",
+                exc_info=True,
+            )
             return {
                 "status": "error",
                 "message": str(exc),
@@ -389,8 +465,8 @@ class Orchestrator:
             else task if isinstance(task, dict) else {"name": str(task)}
         )
         agent_type = (
-            task["metadata"].get("agent_type", None)
-            if hasattr(task, "metadata")
+            task.metadata.get("agent_type", None)
+            if hasattr(task, "metadata") and isinstance(task.metadata, dict)
             else None
         )
         agent = self.agent_factory.spawn_agent(task_dict, agent_type=agent_type)
@@ -454,12 +530,22 @@ class Orchestrator:
         start = time.monotonic()
         try:
             self.start_agent(agent)
-            task_input = (
-                {"task": task.name, "description": task.description}
-                if hasattr(task, "name")
-                else task
+            # Determine the correct task type for this agent
+            agent_type = (
+                task.metadata.get("agent_type", "research")
+                if hasattr(task, "metadata") and isinstance(task.metadata, dict)
+                else "research"
             )
-            result = agent.run(task_input) if hasattr(agent, "run") else None
+            task_type = _AGENT_DEFAULT_TASK.get(agent_type, "generate_report")
+            description = getattr(task, "description", "") or getattr(task, "name", "")
+            task_input = {
+                "type": task_type,
+                "description": description,
+                "prompt": description,
+                "topic": description,
+                "code": description,
+            }
+            result = agent.execute_task(task_input)
             duration = time.monotonic() - start
             self.record_task_metrics(task, duration, success=True)
             self.handle_agent_completion(agent, result)
@@ -739,8 +825,11 @@ class Orchestrator:
 
     def end_execution_trace(self, trace: Any, status: str) -> None:
         """End trace and record final status."""
-        if self.tracer and trace:
-            self.tracer.end_span(trace, attributes={"status": status})
+        if trace and hasattr(trace, "set_status") and hasattr(trace, "end"):
+            from monitoring.tracer import SpanStatus
+            span_status = SpanStatus.OK if status == "success" else SpanStatus.ERROR
+            trace.set_status(span_status)
+            trace.end()
 
     def start_span(self, name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
         """Start a new span within current trace."""
@@ -755,12 +844,8 @@ class Orchestrator:
         if not self.metrics:
             return
         task_id = getattr(task, "task_id", str(task))
-        self.metrics.record_histogram(
-            "task_duration_seconds", duration, labels={"task_id": task_id}
-        )
         self.metrics.increment_counter(
-            "tasks_completed" if success else "tasks_failed",
-            labels={"task_id": task_id},
+            "tasks_completed" if success else "tasks_failed"
         )
 
     def get_execution_metrics(self) -> Dict[str, Any]:
@@ -774,7 +859,7 @@ class Orchestrator:
         if self.budget_manager:
             base["budget"] = self.budget_manager.get_budget_status()
         if self.metrics:
-            base["metrics"] = self.metrics.get_all_metrics()
+            base["metrics"] = self.metrics.get_summary()
         return base
 
     # ==================== RESULT AGGREGATION ====================
@@ -823,6 +908,66 @@ class Orchestrator:
         for task_id, result in task_results.items():
             status = "✓" if result is not None else "✗"
             lines.append(f"  {status} {task_id}: {str(result)[:80]}")
+        return "\n".join(lines)
+
+    def compile_final_report(
+        self, goal: str, analysis: Dict[str, Any], results: Dict[str, Any]
+    ) -> str:
+        """Synthesize all specialist agent outputs into one comprehensive report."""
+        agent_summaries: List[str] = []
+        for agent_name, agent_data in results.items():
+            if agent_data.get("status") == "error":
+                agent_summaries.append(
+                    f"**{agent_name}**: FAILED — {agent_data.get('error', 'unknown error')}"
+                )
+                continue
+            task_outputs: List[str] = []
+            for tr in agent_data.get("task_results", []):
+                task_type = tr.get("task", {}).get("type", "task")
+                res = tr.get("result") or {}
+                output = (
+                    res.get("output")
+                    or res.get("result")
+                    or res.get("report")
+                    or res.get("code")
+                    or str(res)
+                )
+                task_outputs.append(f"  - [{task_type}]: {str(output)[:800]}")
+            agent_summaries.append(
+                f"**{agent_name}** ({agent_data.get('agent_class', '')}):\n"
+                + "\n".join(task_outputs)
+            )
+
+        agents_block = "\n\n".join(agent_summaries) if agent_summaries else "(no agent output)"
+        prompt = (
+            f"You are the Chief AI Officer. Your specialist agents have completed their work.\n\n"
+            f"ORIGINAL GOAL:\n{goal}\n\n"
+            f"GOAL ANALYSIS:\n{json.dumps(analysis, indent=2)}\n\n"
+            f"SPECIALIST AGENT OUTPUTS:\n{agents_block}\n\n"
+            "Write a comprehensive, professional final report that:\n"
+            "1. Opens with an **Executive Summary** (3-4 sentences)\n"
+            "2. Has a dedicated section for each specialist agent's key findings\n"
+            "3. Closes with **Integrated Recommendations & Next Steps**\n"
+            "Use clear Markdown formatting with headers and bullet points."
+        )
+        system = (
+            "You are a senior executive synthesizing specialist AI reports into a final deliverable. "
+            "Write clearly, concisely, and professionally. Use Markdown headers."
+        )
+        try:
+            return self.llm.invoke(prompt, system) or self._fallback_report(goal, agent_summaries)
+        except Exception as exc:
+            logger.warning(f"compile_final_report LLM call failed ({exc}); using fallback.")
+            return self._fallback_report(goal, agent_summaries)
+
+    def _fallback_report(self, goal: str, agent_summaries: List[str]) -> str:
+        """Plain-text report used when the LLM is unavailable (e.g. rate-limited)."""
+        lines = [
+            "# Execution Report (auto-generated — LLM unavailable)\n",
+            f"**Goal**: {goal}\n",
+            "## Agent Outputs\n",
+        ]
+        lines.extend(agent_summaries or ["*(no agent output)*"])
         return "\n".join(lines)
 
     def store_execution_results(self, results: Dict[str, Any]) -> None:

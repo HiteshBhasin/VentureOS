@@ -1,5 +1,13 @@
 from dotenv import load_dotenv
 import os
+import time
+import logging
+
+logger = logging.getLogger(__name__)
+
+# How long to wait before retrying on a 429 (doubles each attempt)
+_RATE_LIMIT_BASE_DELAY = 5.0   # seconds
+_RATE_LIMIT_MAX_RETRIES = 4
 
 # Cohere models removed after Sep 2025 → current replacements
 _COHERE_ALIASES: dict[str, str] = {
@@ -62,8 +70,8 @@ class LLM:
                 "Supported prefixes: gpt-, o1, o3, gemini-, mistral-, command"
             )
 
-    def invoke(self, prompt: str, system_prmpt: str = "") -> str:
-        """Invoke the LLM with the given prompt and return the generated response."""
+    def _invoke_once(self, prompt: str, system_prmpt: str) -> str:
+        """Single (non-retried) LLM call — called by invoke()."""
         if self.provider == "openai":
             response = self.client.chat.completions.create(  # type: ignore[union-attr]
                 model=self.model,
@@ -102,3 +110,25 @@ class LLM:
             return content[0].text if content else ""  # type: ignore[union-attr]
 
         raise ValueError(f"Unknown provider: '{self.provider}'")
+
+    def invoke(self, prompt: str, system_prmpt: str = "") -> str:
+        """Invoke the LLM with automatic retry on 429 rate-limit responses."""
+        last_exc: Exception = RuntimeError("No attempts made")
+        for attempt in range(_RATE_LIMIT_MAX_RETRIES):
+            try:
+                return self._invoke_once(prompt, system_prmpt)
+            except Exception as exc:
+                last_exc = exc
+                msg = str(exc)
+                if "429" in msg or "rate limit" in msg.lower() or "rate_limited" in msg.lower():
+                    if attempt < _RATE_LIMIT_MAX_RETRIES - 1:
+                        delay = _RATE_LIMIT_BASE_DELAY * (2 ** attempt)
+                        logger.warning(
+                            f"Rate limit hit on attempt {attempt + 1}/{_RATE_LIMIT_MAX_RETRIES}. "
+                            f"Retrying in {delay:.1f}s..."
+                        )
+                        time.sleep(delay)
+                        continue
+                # Non-429 errors or final attempt — re-raise immediately
+                raise
+        raise last_exc
