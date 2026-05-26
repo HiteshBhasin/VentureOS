@@ -52,8 +52,14 @@ class MemoryManager:
 
     def initialize(self) -> None:
         """Initialize all memory stores."""
-        # Connect stores that are already attached but not yet active.
-        pass
+        from memory.cache_store import CacheStore
+        from memory.vector_store import VectorStore
+
+        cache = CacheStore(config=self.config.get("cache_store"))
+        cache.connect()  # uses in-memory dict fallback if Redis is unavailable
+        vector = VectorStore(config=self.config.get("vector_store"))
+        self.connect_cache_store(cache)
+        self.connect_vector_store(vector)
 
     def connect_cache_store(self, store: Any) -> None:
         """Connect cache store."""

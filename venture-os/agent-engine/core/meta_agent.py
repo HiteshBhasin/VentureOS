@@ -2,7 +2,6 @@
 import json
 import logging
 from typing import Any, Dict, List, Optional
-from core.agent_factory import AgentFactory
 from .llm_class import LLM
 
 logger = logging.getLogger(__name__)
@@ -45,8 +44,7 @@ class Meta_agent:
             cleaned = cleaned.split("```")[1]
             if cleaned.startswith("json"):
                 cleaned = cleaned[4:]
-        parsed_response = json.loads(cleaned.strip())
-        return parsed_response
+        return json.loads(cleaned.strip())
 
     def _plan_agent_roster(self, analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Ask the LLM to map required capabilities to concrete agent definitions.
@@ -64,12 +62,12 @@ class Meta_agent:
             "For each agent, provide these fields:\n"
             "  agent_name   : short snake_case name (no spaces)\n"
             "  use_case     : 1-2 sentence plain-English description\n"
-            "  capabilities : list of method signatures e.g. [\"analyze_market_trends(market_data)\", ...]\n"
+            '  capabilities : list of method signatures e.g. ["analyze_market_trends(market_data)", ...]\n'
             "  tasks        : list of 1-2 concrete task dicts. "
-            "IMPORTANT: each task dict MUST have a \"type\" key whose value is the capability name "
+            'IMPORTANT: each task dict MUST have a "type" key whose value is the capability name '
             "EXACTLY as it appears before the opening parenthesis "
-            "(e.g. if capability is \"analyze_market_trends(market_data)\", then type must be "
-            "\"analyze_market_trends\"). Include any other relevant keys the task needs.\n\n"
+            '(e.g. if capability is "analyze_market_trends(market_data)", then type must be '
+            '"analyze_market_trends"). Include any other relevant keys the task needs.\n\n'
             "Return ONLY a valid JSON array with no markdown fences."
         )
         system = (
@@ -77,6 +75,7 @@ class Meta_agent:
             "Output only a valid JSON array, no explanation, no markdown."
         )
         response = self.llm.invoke(prompt, system)
+
         cleaned = response.strip()
         if cleaned.startswith("```"):
             # strip ```json ... ``` fences
@@ -153,28 +152,28 @@ class Meta_agent:
     #             elif agent_status == "failed":
     #                 self.handle_failure(task)
 
-    def refine_strategy(self):
-        """Re-analyze current task statuses and adjust strategy."""
-        all_tasks = getattr(self, "_tasks", [])
-        if not all_tasks:
-            return
-        failed_tasks = [t for t in all_tasks if t.get("status") == "failed"]
-        pending_tasks = [t for t in all_tasks if t.get("status") == "pending"]
-        # Reset failed tasks for retry
-        for task in failed_tasks:
-            task["status"] = "pending"
-            task["assigned_agent"] = None
-            logging.info(
-                f"Refining strategy: resetting failed task '{task['task_name']}' for retry"
-            )
-        # Re-sort pending tasks by dependency order
-        if pending_tasks:
-            sorted_tasks = self._topological_sort(pending_tasks)
-            for i, task in enumerate(sorted_tasks):
-                task["priority"] = i
-            logging.info(
-                f"Refining strategy: re-prioritized {len(sorted_tasks)} pending tasks"
-            )
+    # def refine_strategy(self):
+    #     """Re-analyze current task statuses and adjust strategy."""
+    #     all_tasks = getattr(self, "_tasks", [])
+    #     if not all_tasks:
+    #         return
+    #     failed_tasks = [t for t in all_tasks if t.get("status") == "failed"]
+    #     pending_tasks = [t for t in all_tasks if t.get("status") == "pending"]
+    #     # Reset failed tasks for retry
+    #     for task in failed_tasks:
+    #         task["status"] = "pending"
+    #         task["assigned_agent"] = None
+    #         logging.info(
+    #             f"Refining strategy: resetting failed task '{task['task_name']}' for retry"
+    #         )
+    #     # Re-sort pending tasks by dependency order
+    #     if pending_tasks:
+    #         sorted_tasks = self._topological_sort(pending_tasks)
+    #         for i, task in enumerate(sorted_tasks):
+    #             task["priority"] = i
+    #         logging.info(
+    #             f"Refining strategy: re-prioritized {len(sorted_tasks)} pending tasks"
+    #         )
 
     def _topological_sort(self, tasks):
         """_summary_
@@ -193,30 +192,30 @@ class Meta_agent:
                     dfs(dep, visited, stack)
             stack.append(task)
 
-        visited = set()
-        stack = []
-        for task in tasks:
-            if task["task_name"] not in visited:
-                dfs(task, visited, stack)
-        return stack[::-1]
+    #     visited = set()
+    #     stack = []
+    #     for task in tasks:
+    #         if task["task_name"] not in visited:
+    #             dfs(task, visited, stack)
+    #     return stack[::-1]
 
-    def depency_satified(self, task: list):
-        # check if all dependencies of the task are completed
-        for dep in task["dependencies"]:
-            if dep["status"] != "completed":
-                return False
-        return True
+    # def depency_satified(self, task: list):
+    #     # check if all dependencies of the task are completed
+    #     for dep in task["dependencies"]:
+    #         if dep["status"] != "completed":
+    #             return False
+    #     return True
 
-    def check_agent_status(self, agent_id):
-        # check the status of the assigned agent
-        if agent_id:
-            # logic to check agent status
-            return "completed"  # or "failed"
-        return "pending"
+    # def check_agent_status(self, agent_id):
+    #     # check the status of the assigned agent
+    #     if agent_id:
+    #         # logic to check agent status
+    #         return "completed"  # or "failed"
+    #     return "pending"
 
-    def handle_failure(self, task):
-        # logic to handle task failure, such as retrying or reassigning the task
-        if task["status"] == "failed":
-            task["status"] = "pending"
-            task["assigned_agent"] = None
-            logging.info(f"Task {task['task_name']} failed. Retrying...")
+    # def handle_failure(self, task):
+    #     # logic to handle task failure, such as retrying or reassigning the task
+    #     if task["status"] == "failed":
+    #         task["status"] = "pending"
+    #         task["assigned_agent"] = None
+    #         logging.info(f"Task {task['task_name']} failed. Retrying...")

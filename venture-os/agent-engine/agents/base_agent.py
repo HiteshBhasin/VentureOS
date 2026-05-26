@@ -3,7 +3,6 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 import logging
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -49,6 +48,10 @@ class BaseAgent(ABC):
     def stop(self) -> None:
         """Stop the agent and cleanup resources."""
         self.status = "stopped"
+
+    def complete(self) -> None:
+        """Mark the agent as completed after all tasks finish."""
+        self.status = "completed"
 
     def pause(self) -> None:
         """Pause the agent execution."""

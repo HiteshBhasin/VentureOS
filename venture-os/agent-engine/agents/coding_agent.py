@@ -2,6 +2,7 @@
 import re
 from typing import Any, Dict, List, Optional
 from .base_agent import BaseAgent
+from tools.code_executor import CodeExecutor
 
 
 class CodingAgent(BaseAgent):
@@ -25,11 +26,15 @@ class CodingAgent(BaseAgent):
         """Execute a coding task (generation, debugging, refactoring)."""
         task_type = task.get("type")
         if task_type == "generate_code":
+
             result = self.generate_code(
                 specification=task.get("specification", ""),
                 language=task.get("language", "python"),
             )
-            return {"status": "success", "type": "generate_code", "code": result}
+            execution = CodeExecutor().execute(
+                code=result, language=task.get("language", "python")
+            )
+            return {"status": "success", "type": "generate_code", "code": execution}
         elif task_type == "generate_function":
             result = self.generate_function(
                 name=task.get("name", "generated_function"),
@@ -39,14 +44,22 @@ class CodingAgent(BaseAgent):
             return {
                 "status": "success",
                 "type": "generate_function",
-                "code": result,
+                "code": CodeExecutor().execute(
+                    code=result, language=task.get("language", "python")
+                ),
             }
         elif task_type == "generate_tests":
             result = self.generate_tests(
                 code=task.get("code", ""),
                 framework=task.get("framework", "pytest"),
             )
-            return {"status": "success", "type": "generate_tests", "code": result}
+            return {
+                "status": "success",
+                "type": "generate_tests",
+                "code": CodeExecutor().execute(
+                    code=result, language=task.get("language", "python")
+                ),
+            }
         elif task_type == "generate_documentation":
             result = self.generate_documentation(
                 code=task.get("code", ""),
@@ -55,7 +68,9 @@ class CodingAgent(BaseAgent):
             return {
                 "status": "success",
                 "type": "generate_documentation",
-                "code": result,
+                "code": CodeExecutor().execute(
+                    code=result, language=task.get("language", "python")
+                ),
             }
         elif task_type == "debug_code":
             return self.debug_error(
@@ -67,7 +82,13 @@ class CodingAgent(BaseAgent):
                 code=task.get("code", ""),
                 refactor_type=task.get("refactor_type", "optimize"),
             )
-            return {"status": "success", "type": "refactor_code", "code": result}
+            return {
+                "status": "success",
+                "type": "refactor_code",
+                "code": CodeExecutor().execute(
+                    code=result, language=task.get("language", "python")
+                ),
+            }
         elif task_type == "generate_agent":
             return self._generate_agent_task(
                 use_case=task.get("use_case", ""),
@@ -91,10 +112,16 @@ class CodingAgent(BaseAgent):
         import os
 
         # Normalise class/file names
-        class_name = "".join(w.capitalize() for w in re.split(r"[\s_-]+", agent_name)) + "Agent"
+        class_name = (
+            "".join(w.capitalize() for w in re.split(r"[\s_-]+", agent_name)) + "Agent"
+        )
         file_name = re.sub(r"[^\w]+", "_", agent_name.lower()).strip("_") + "_agent.py"
 
-        caps_text = "\n".join(f"  - {c}" for c in capabilities) if capabilities else "  - general purpose task execution"
+        caps_text = (
+            "\n".join(f"  - {c}" for c in capabilities)
+            if capabilities
+            else "  - general purpose task execution"
+        )
 
         prompt = f"""Write a complete Python agent class for this use case:
 

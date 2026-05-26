@@ -1,8 +1,9 @@
 # Task scheduling & coordination
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 import json
 import uuid
 import logging
+import asyncio
 
 # @ need to add asyncio loop for scheduling and monitoring agents and tasks also need to add more specific exception handling for different failure scenarios (agent errors, task failures, budget breaches) and implement retry logic with backoff for transient issues. Also need to implement more detailed metrics collection and reporting for agent performance, task execution times, and resource usage to enable better monitoring and optimization of the system.
 
@@ -12,7 +13,7 @@ from .agent_factory import AgentFactory
 from .budget_manager import BudgetManager, BudgetType
 from .events import EventBus, EventType, Event
 from .task_graph import TaskGraph, TaskNode, TaskStatus
-from memory.memory_manager import MemoryManager
+from memory.memory_manager import MemoryManager, MemoryType
 from monitoring.metrics import MetricsCollector
 from monitoring.tracer import Tracer
 from models.llm_router import LLMRouter
@@ -27,9 +28,9 @@ logger = logging.getLogger(__name__)
 # Maps agent type → the most general task type that agent accepts
 _AGENT_DEFAULT_TASK = {
     "research": "generate_report",
-    "coding":   "generate_code",
-    "review":   "review_code",
-    "runtime":  "run_code",
+    "coding": "generate_code",
+    "review": "review_code",
+    "runtime": "run_code",
 }
 
 
@@ -258,14 +259,21 @@ class Orchestrator:
             return {"status": "error", "message": "Invalid or empty user input"}
 
         self._correlation_id = self.get_correlation_id()
-        logger.info(f"Processing request [{self._correlation_id}]: {user_input[:80]}...")
-
+        logger.info(
+            f"Processing request [{self._correlation_id}]: {user_input[:80]}..."
+        )
+        prior_context = ""
+        if self.memory_manager:
+            last = self.memory_manager.retrieve("last_run_summary")
+            if last:
+                prior_context = f"\n\nPrior run context:\n{last}"
+        # inject into the user_input or the meta analysis prompt
         try:
             from .meta_agent import Meta_agent
 
             # ── Step 1: Meta_agent analyses the goal and decides which agents are needed ──
             meta = Meta_agent(llm=self.llm)
-            analysis = meta.analyze_user_requirement(user_input)
+            analysis = meta.analyze_user_requirement(user_input + prior_context)
             roster = meta._plan_agent_roster(analysis)
             logger.info(
                 f"[{self._correlation_id}] Roster planned — "
@@ -284,18 +292,31 @@ class Orchestrator:
                         agent_name=agent_name,
                         capabilities=spec.get("capabilities", []),
                     )
+                    
                     self.register_active_agent(agent)
-                    spawned[agent_name] = {"agent": agent, "tasks": spec.get("tasks", [])}
-                    logger.info(f"  Spawned {type(agent).__name__} (id={agent.agent_id})")
+                    spawned[agent_name] = {
+                        "agent": agent,
+                        "tasks": spec.get("tasks", []),
+                    }
+                    logger.info(
+                        f"  Spawned {type(agent).__name__} (id={agent.agent_id})"
+                    )
                 except Exception as exc:
                     logger.error(f"  Failed to spawn '{agent_name}': {exc}")
-                    spawned[agent_name] = {"agent": None, "tasks": [], "error": str(exc)}
+                    spawned[agent_name] = {
+                        "agent": None,
+                        "tasks": [],
+                        "error": str(exc),
+                    }
 
             # ── Step 3: Orchestrator executes every assigned task ──────────────────────
             all_results: Dict[str, Any] = {}
             for agent_name, entry in spawned.items():
                 if entry.get("error"):
-                    all_results[agent_name] = {"status": "error", "error": entry["error"]}
+                    all_results[agent_name] = {
+                        "status": "error",
+                        "error": entry["error"],
+                    }
                     continue
                 agent = entry["agent"]
                 task_results = []
@@ -307,10 +328,16 @@ class Orchestrator:
                             f"  [{agent_name}] '{task.get('type')}' → {result.get('status')}"
                         )
                     except Exception as exc:
-                        logger.error(f"  [{agent_name}] '{task.get('type')}' failed: {exc}")
-                        task_results.append(
-                            {"task": task, "result": {"status": "error", "error": str(exc)}}
+                        logger.error(
+                            f"  [{agent_name}] '{task.get('type')}' failed: {exc}"
                         )
+                        task_results.append(
+                            {
+                                "task": task,
+                                "result": {"status": "error", "error": str(exc)},
+                            }
+                        )
+                agent.complete()
                 all_results[agent_name] = {
                     "agent_id": agent.agent_id,
                     "agent_class": type(agent).__name__,
@@ -320,6 +347,18 @@ class Orchestrator:
 
             # ── Step 4: Orchestrator compiles the final comprehensive report ───────────
             report = self.compile_final_report(user_input, analysis, all_results)
+            # after compiling report
+            if self.memory_manager:
+                self.memory_manager.store(
+                    key=f"run:{self._correlation_id}",
+                    value={"goal": user_input, "report": report},
+                    memory_type=MemoryType.EPISODIC,
+                )
+                self.memory_manager.store(
+                    key="last_run_summary",
+                    value=report,
+                    memory_type=MemoryType.SHORT_TERM,
+                )
 
             return {
                 "status": "success",
@@ -332,11 +371,13 @@ class Orchestrator:
                 "agent_results": all_results,
                 "report": report,
             }
+
         except Exception as exc:
             logger.error(
                 f"Error processing request [{self._correlation_id}]: {exc}",
                 exc_info=True,
             )
+
             return {
                 "status": "error",
                 "message": str(exc),
@@ -455,6 +496,19 @@ class Orchestrator:
 
     # ==================== AGENT SPAWNING & MANAGEMENT ====================
 
+    def _spawn_from_spec(self, spec: Dict[str, Any]) -> Any:
+        """Spawn a dynamic agent from a roster spec dict, inject dependencies, register it."""
+        if not self.agent_factory:
+            raise RuntimeError("AgentFactory not initialized")
+        agent = self.agent_factory.spawn_dynamic_agent(
+            use_case=spec["use_case"],
+            agent_name=spec["agent_name"],
+            capabilities=spec.get("capabilities", []),
+        )
+        self.inject_agent_dependencies(agent)
+        self.register_active_agent(agent)
+        return agent
+
     def spawn_and_configure_agent(self, task: Any) -> Any:
         """Spawn agent via factory, inject dependencies (memory, tools, events), return agent."""
         if not self.agent_factory:
@@ -521,30 +575,38 @@ class Orchestrator:
     # ==================== AGENT EXECUTION ====================
 
     def execute_agent_task(self, agent: Any, task: Any) -> Any:
-        """Execute task with agent: start trace, invoke, monitor, record metrics."""
+        """Execute task with agent: start trace, invoke, monitor, record metrics.
+
+        ``task`` can be either a TaskNode (task-graph path) or a plain dict
+        (roster path, which already carries the correct ``type`` field).
+        """
         import time
 
         agent_id = getattr(agent, "agent_id", str(id(agent)))
-        task_id = getattr(task, "task_id", str(task))
+        task_id = task.get("type", str(task)) if isinstance(task, dict) else getattr(task, "task_id", str(task))
         trace = self.start_execution_trace(task)
         start = time.monotonic()
         try:
             self.start_agent(agent)
-            # Determine the correct task type for this agent
-            agent_type = (
-                task.metadata.get("agent_type", "research")
-                if hasattr(task, "metadata") and isinstance(task.metadata, dict)
-                else "research"
-            )
-            task_type = _AGENT_DEFAULT_TASK.get(agent_type, "generate_report")
-            description = getattr(task, "description", "") or getattr(task, "name", "")
-            task_input = {
-                "type": task_type,
-                "description": description,
-                "prompt": description,
-                "topic": description,
-                "code": description,
-            }
+            if isinstance(task, dict):
+                # Roster path — task dict already has the correct type/description
+                task_input = task
+            else:
+                # Task-graph path — reconstruct task_input from TaskNode attributes
+                agent_type = (
+                    task.metadata.get("agent_type", "research")
+                    if hasattr(task, "metadata") and isinstance(task.metadata, dict)
+                    else "research"
+                )
+                task_type = _AGENT_DEFAULT_TASK.get(agent_type, "generate_report")
+                description = getattr(task, "description", "") or getattr(task, "name", "")
+                task_input = {
+                    "type": task_type,
+                    "description": description,
+                    "prompt": description,
+                    "topic": description,
+                    "code": description,
+                }
             result = agent.execute_task(task_input)
             duration = time.monotonic() - start
             self.record_task_metrics(task, duration, success=True)
@@ -827,6 +889,7 @@ class Orchestrator:
         """End trace and record final status."""
         if trace and hasattr(trace, "set_status") and hasattr(trace, "end"):
             from monitoring.tracer import SpanStatus
+
             span_status = SpanStatus.OK if status == "success" else SpanStatus.ERROR
             trace.set_status(span_status)
             trace.end()
@@ -844,9 +907,7 @@ class Orchestrator:
         if not self.metrics:
             return
         task_id = getattr(task, "task_id", str(task))
-        self.metrics.increment_counter(
-            "tasks_completed" if success else "tasks_failed"
-        )
+        self.metrics.increment_counter("tasks_completed" if success else "tasks_failed")
 
     def get_execution_metrics(self) -> Dict[str, Any]:
         """Get current execution metrics summary."""
@@ -938,7 +999,9 @@ class Orchestrator:
                 + "\n".join(task_outputs)
             )
 
-        agents_block = "\n\n".join(agent_summaries) if agent_summaries else "(no agent output)"
+        agents_block = (
+            "\n\n".join(agent_summaries) if agent_summaries else "(no agent output)"
+        )
         prompt = (
             f"You are the Chief AI Officer. Your specialist agents have completed their work.\n\n"
             f"ORIGINAL GOAL:\n{goal}\n\n"
@@ -955,9 +1018,13 @@ class Orchestrator:
             "Write clearly, concisely, and professionally. Use Markdown headers."
         )
         try:
-            return self.llm.invoke(prompt, system) or self._fallback_report(goal, agent_summaries)
+            return self.llm.invoke(prompt, system) or self._fallback_report(
+                goal, agent_summaries
+            )
         except Exception as exc:
-            logger.warning(f"compile_final_report LLM call failed ({exc}); using fallback.")
+            logger.warning(
+                f"compile_final_report LLM call failed ({exc}); using fallback."
+            )
             return self._fallback_report(goal, agent_summaries)
 
     def _fallback_report(self, goal: str, agent_summaries: List[str]) -> str:
@@ -1172,4 +1239,70 @@ class Orchestrator:
             "completed": progress["completed"],
             "failed": progress["failed"],
         }
-        pass
+
+    async def _run_agent(
+        self, spec: Dict[str, Any]
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Run one agent and all its tasks, yielding a progress event after each step.
+
+        Yields dicts with an ``event`` key:
+          - ``agent_spawned``  — agent is ready
+          - ``task_done``      — one task finished successfully
+          - ``task_error``     — one task failed
+          - ``agent_error``    — agent could not be spawned
+          - ``agent_done``     — final summary (callers collect this to build all_results)
+        """
+        agent_name = spec["agent_name"]
+
+        # ── spawn ──────────────────────────────────────────────────────────────────
+        try:
+            agent = await asyncio.to_thread(self._spawn_from_spec, spec)
+            yield {
+                "event": "agent_spawned",
+                "agent_name": agent_name,
+                "agent_id": agent.agent_id,
+            }
+        except Exception as exc:
+            logger.error(f"Failed to spawn '{agent_name}': {exc}")
+            yield {
+                "event": "agent_error",
+                "agent_name": agent_name,
+                "error": str(exc),
+                "task_results": [],
+            }
+            return
+
+        # ── execute tasks ──────────────────────────────────────────────────────────
+        task_results: List[Dict[str, Any]] = []
+        for task in spec.get("tasks", []):
+            try:
+                result = await asyncio.to_thread(self.execute_agent_task, agent, task)
+                task_results.append({"task": task, "result": result})
+                yield {
+                    "event": "task_done",
+                    "agent_name": agent_name,
+                    "task_type": task.get("type"),
+                    "status": result.get("status"),
+                }
+            except Exception as exc:
+                logger.error(f"[{agent_name}] task '{task.get('type')}' failed: {exc}")
+                task_results.append(
+                    {"task": task, "result": {"status": "error", "error": str(exc)}}
+                )
+                yield {
+                    "event": "task_error",
+                    "agent_name": agent_name,
+                    "task_type": task.get("type"),
+                    "error": str(exc),
+                }
+
+        agent.complete()
+        # final summary — callers key on event=="agent_done" to build all_results
+        yield {
+            "event": "agent_done",
+            "agent_name": agent_name,
+            "agent_id": agent.agent_id,
+            "agent_class": type(agent).__name__,
+            "status": agent.status,
+            "task_results": task_results,
+        }
