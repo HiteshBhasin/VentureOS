@@ -6,6 +6,8 @@ import logging
 import uuid
 import time
 import asyncio
+import os
+import re
 from agents.base_agent import BaseAgent
 
 logger = logging.getLogger(__name__)
@@ -34,6 +36,7 @@ AGENT_TYPE_KEYWORDS = {
     "review": ["review", "check", "validate", "audit", "inspect", "evaluate", "assess"],
     "runtime": ["run", "execute", "deploy", "start", "launch", "test"],
 }
+
 
 class AgentFactory:
     """Factory for creating, tracking, and managing agents."""
@@ -283,24 +286,98 @@ class AgentFactory:
             A running instance of the newly generated agent.
         """
         from agents.coding_agent import CodingAgent
+        from .validator import Validator
 
-        # Step 1 — Generate the agent source file via CodingAgent
-        logger.info(f"Generating new agent '{agent_name}' for use case: {use_case}")
-        coder = CodingAgent(agent_id=f"meta_coder_{uuid.uuid4().hex[:8]}", llm=self.llm)
-        result = coder.execute_task({
-            "type": "generate_agent",
-            "use_case": use_case,
-            "agent_name": agent_name,
-            "capabilities": capabilities or [],
-        })
+        # Pre-compute deterministic file path and class name from agent_name.
+        # Mirrors the logic in CodingAgent._generate_agent_task so we can check
+        # existence before deciding whether to generate.
+        _agents_dir = os.path.normpath(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agents")
+        )
+        _file_name = re.sub(r"[^\w]+", "_", agent_name.lower()).strip("_") + "_agent.py"
+        file_path: str = os.path.join(_agents_dir, _file_name)
+        class_name: str = (
+            "".join(w.capitalize() for w in re.split(r"[\s_-]+", agent_name)) + "Agent"
+        )
 
-        if result.get("status") != "success":
-            raise RuntimeError(f"CodingAgent failed to generate agent: {result}")
+        # Step 1 — Generate or reuse the agent source file
+        if os.path.exists(file_path):
+            logger.info(f"Reusing existing agent file for '{agent_name}': {file_path}")
+        else:
+            logger.info(f"Generating new agent '{agent_name}' for use case: {use_case}")
+            max_retries = 3
+            last_errors: list = []
+            validation = None
 
-        file_path: str = result["file_path"]
-        class_name: str = result["class_name"]
-        logger.info(f"Agent source written to {file_path}")
+            for attempt in range(1, max_retries + 1):
+                # On retries, feed previous validation errors back to the LLM
+                prompt = use_case
+                if last_errors:
+                    prompt += (
+                        "\n\nPrevious attempt failed — fix these errors:\n"
+                        + "\n".join(f"- {e}" for e in last_errors)
+                    )
 
+                try:
+                    coder = CodingAgent(
+                        agent_id=f"meta_coder_{uuid.uuid4().hex[:8]}", llm=self.llm
+                    )
+                    result = coder.execute_task(
+                        {
+                            "type": "generate_agent",
+                            "use_case": prompt,
+                            "agent_name": agent_name,
+                            "capabilities": capabilities or [],
+                        }
+                    )
+
+                    if result.get("status") != "success":
+                        last_errors = [
+                            f"CodingAgent returned status '{result.get('status')}'"
+                        ]
+                        logger.warning(
+                            f"Attempt {attempt}/{max_retries}: generation not successful, retrying..."
+                        )
+                        continue
+
+                    validator = Validator()
+                    validation = validator.validate_generated_agent_code(
+                        code=result["code"],
+                        expected_class_name=class_name,
+                        capabilities=capabilities or [],
+                    )
+
+                    if validation.is_valid:
+                        break  # Success — exit retry loop
+
+                    # Validation failed — remove the bad file and try again
+                    last_errors = validation.errors
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                        logger.warning(f"Removed invalid generated file: {file_path}")
+                    logger.warning(
+                        f"Attempt {attempt}/{max_retries}: validation failed — "
+                        + "; ".join(last_errors)
+                    )
+
+                except Exception as e:
+                    last_errors = [str(e)]
+                    logger.warning(
+                        f"Attempt {attempt}/{max_retries}: generation raised exception: {e}"
+                    )
+            else:
+                # Loop completed without a successful break — all attempts exhausted
+                raise RuntimeError(
+                    f"Failed to generate valid agent '{agent_name}' after {max_retries} attempts. "
+                    f"Last errors: {'; '.join(last_errors)}"
+                )
+
+            if validation is not None and validation.warnings:
+                logger.warning(
+                    f"Generated agent '{agent_name}' warnings: "
+                    + "; ".join(validation.warnings)
+                )
+            logger.info(f"Agent source written to {file_path}")
         # Step 2 — Dynamically load the module
         module_name = f"agents.{agent_name}_agent"
         spec = importlib.util.spec_from_file_location(module_name, file_path)
@@ -323,7 +400,9 @@ class AgentFactory:
 
         # Step 4 — Register and spawn
         self.register_agent_type(agent_name, agent_class)
-        agent_id = f"agent_{agent_name}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
+        agent_id = (
+            f"agent_{agent_name}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
+        )
         agent = agent_class(
             agent_id=agent_id,
             llm=self.llm,

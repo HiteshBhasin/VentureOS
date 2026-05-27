@@ -221,6 +221,146 @@ class Validator:
                         )
         return ValidationResult(is_valid=True, errors=[], warnings=[], field_errors={})
 
+    # ==================== Generated Agent Code Validation ====================
+
+    def validate_generated_agent_code(
+        self,
+        code: str,
+        expected_class_name: str,
+        capabilities: Optional[List[str]] = None,
+    ) -> ValidationResult:
+        """Validate LLM-generated agent code before exec_module().
+
+        Uses Python's ast module for structural checks and _DANGEROUS_PATTERNS
+        from CodeExecutor for security scanning.
+
+        Checks enforced:
+          1. Valid Python syntax
+          2. Security scan (no eval/exec/os.system/subprocess/socket/requests etc.)
+          3. Class named expected_class_name exists
+          4. Class inherits from BaseAgent
+          5. execute_task method is defined
+          6. execute_task routes on task.get("type") not another key
+          7. Each capability has a corresponding method
+        """
+        import ast as _ast
+
+        errors: List[str] = []
+        warnings: List[str] = []
+        field_errors: Dict[str, List[str]] = {}
+
+        # Check 1 — Valid Python syntax
+        try:
+            tree = _ast.parse(code)
+        except SyntaxError as exc:
+            return ValidationResult(
+                is_valid=False,
+                errors=[f"Syntax error in generated code: {exc}"],
+                warnings=[],
+                field_errors={"syntax": ["parse_error"]},
+            )
+
+        # Check 2 — Security scan using _DANGEROUS_PATTERNS from CodeExecutor
+        from tools.code_executor import CodeExecutor
+
+        for pattern, description in CodeExecutor._DANGEROUS_PATTERNS.get("python", []):
+            if re.search(pattern, code):
+                errors.append(f"Security violation: {description}")
+                field_errors.setdefault("security", []).append(description)
+
+        # Fail immediately on security violations — do not proceed
+        if errors:
+            return ValidationResult(
+                is_valid=False,
+                errors=errors,
+                warnings=warnings,
+                field_errors=field_errors,
+            )
+
+        # Check 3 — Class with expected name exists
+        class_node: Optional[_ast.ClassDef] = None
+        for node in _ast.walk(tree):
+            if isinstance(node, _ast.ClassDef) and node.name == expected_class_name:
+                class_node = node
+                break
+
+        if class_node is None:
+            errors.append(
+                f"Expected class '{expected_class_name}' not found in generated code"
+            )
+            field_errors.setdefault("class", []).append("missing_class")
+            return ValidationResult(
+                is_valid=False,
+                errors=errors,
+                warnings=warnings,
+                field_errors=field_errors,
+            )
+
+        # Check 4 — Class inherits from BaseAgent
+        base_names: List[str] = []
+        for base in class_node.bases:
+            if isinstance(base, _ast.Name):
+                base_names.append(base.id)
+            elif isinstance(base, _ast.Attribute):
+                base_names.append(base.attr)
+        if "BaseAgent" not in base_names:
+            errors.append(
+                f"Class '{expected_class_name}' does not inherit from BaseAgent "
+                f"(found: {base_names or ['none']})"
+            )
+            field_errors.setdefault("class", []).append("missing_base_class")
+
+        # Collect all method names defined directly on the class
+        method_names = [
+            node.name
+            for node in _ast.walk(class_node)
+            if isinstance(node, _ast.FunctionDef)
+        ]
+
+        # Check 5 — execute_task method exists
+        if "execute_task" not in method_names:
+            errors.append(
+                f"Class '{expected_class_name}' is missing required 'execute_task' method"
+            )
+            field_errors.setdefault("methods", []).append("missing_execute_task")
+        else:
+            # Check 6 — execute_task routes on task.get("type")
+            execute_task_node = next(
+                (
+                    n
+                    for n in _ast.walk(class_node)
+                    if isinstance(n, _ast.FunctionDef) and n.name == "execute_task"
+                ),
+                None,
+            )
+            if execute_task_node is not None:
+                method_src = _ast.unparse(execute_task_node)
+                if '"type"' not in method_src and "'type'" not in method_src:
+                    warnings.append(
+                        'execute_task does not route on task.get("type") — '
+                        "may use wrong routing key"
+                    )
+                    field_errors.setdefault("methods", []).append("wrong_routing_key")
+
+        # Check 7 — Each capability has a corresponding method
+        for cap in capabilities or []:
+            method_name = re.sub(r"[\s\-]+", "_", cap.lower().strip())
+            if method_name not in method_names:
+                warnings.append(
+                    f"Capability '{cap}' has no corresponding method '{method_name}'"
+                )
+                field_errors.setdefault("capabilities", []).append(
+                    f"missing_{method_name}"
+                )
+
+        is_valid = len(errors) == 0
+        return ValidationResult(
+            is_valid=is_valid,
+            errors=errors,
+            warnings=warnings,
+            field_errors=field_errors,
+        )
+
     # ==================== Agent Guardrails ====================
 
     # Required fields for agent configuration
@@ -473,7 +613,12 @@ class Validator:
         if schema_type == "object":
             if not isinstance(data, dict):
                 errors.append("Data must be a JSON object")
-                return ValidationResult(is_valid=False, errors=errors, warnings=warnings, field_errors=field_errors)
+                return ValidationResult(
+                    is_valid=False,
+                    errors=errors,
+                    warnings=warnings,
+                    field_errors=field_errors,
+                )
             for field in schema.get("required", []):
                 if field not in data:
                     errors.append(f"Missing required field: {field}")
@@ -489,7 +634,12 @@ class Validator:
         elif schema_type == "array":
             if not isinstance(data, list):
                 errors.append("Data must be an array")
-                return ValidationResult(is_valid=False, errors=errors, warnings=warnings, field_errors=field_errors)
+                return ValidationResult(
+                    is_valid=False,
+                    errors=errors,
+                    warnings=warnings,
+                    field_errors=field_errors,
+                )
             items_schema = schema.get("items")
             if items_schema:
                 for i, item in enumerate(data):
@@ -530,13 +680,16 @@ class Validator:
             field_errors.setdefault("value", []).append("invalid_enum")
 
         is_valid = len(errors) == 0
-        return ValidationResult(is_valid=is_valid, errors=errors, warnings=warnings, field_errors=field_errors)
-        
+        return ValidationResult(
+            is_valid=is_valid,
+            errors=errors,
+            warnings=warnings,
+            field_errors=field_errors,
+        )
 
     def validate_type(self, value: Any, expected_type: Type) -> bool:
         """Validate value is of expected type."""
         return isinstance(value, expected_type)
-        
 
     def validate_required_fields(
         self, data: Dict[str, Any], required: List[str]
@@ -551,7 +704,6 @@ class Validator:
                     field_errors={field: ["required"]},
                 )
         return ValidationResult(is_valid=True, errors=[], warnings=[], field_errors={})
-        
 
     def validate_field_types(
         self, data: Dict[str, Any], field_types: Dict[str, Type]
@@ -566,7 +718,9 @@ class Validator:
                 )
                 field_errors.setdefault(field, []).append("invalid_type")
         is_valid = len(errors) == 0
-        return ValidationResult(is_valid=is_valid, errors=errors, warnings=[], field_errors=field_errors)
+        return ValidationResult(
+            is_valid=is_valid, errors=errors, warnings=[], field_errors=field_errors
+        )
 
     # ==================== Data Validation ====================
 
@@ -593,7 +747,9 @@ class Validator:
         if pattern is not None and not re.search(pattern, value):
             errors.append(f"String does not match required pattern")
         is_valid = len(errors) == 0
-        return ValidationResult(is_valid=is_valid, errors=errors, warnings=[], field_errors={})
+        return ValidationResult(
+            is_valid=is_valid, errors=errors, warnings=[], field_errors={}
+        )
 
     def validate_number(
         self,
@@ -615,7 +771,9 @@ class Validator:
         if max_val is not None and value > max_val:
             errors.append(f"Value must be <= {max_val}")
         is_valid = len(errors) == 0
-        return ValidationResult(is_valid=is_valid, errors=errors, warnings=[], field_errors={})
+        return ValidationResult(
+            is_valid=is_valid, errors=errors, warnings=[], field_errors={}
+        )
 
     def validate_list(
         self,
@@ -644,7 +802,9 @@ class Validator:
                         f"Item at index {i} must be of type {item_type.__name__}"
                     )
         is_valid = len(errors) == 0
-        return ValidationResult(is_valid=is_valid, errors=errors, warnings=[], field_errors={})
+        return ValidationResult(
+            is_valid=is_valid, errors=errors, warnings=[], field_errors={}
+        )
 
     def validate_dict(
         self, value: Dict, required_keys: Optional[List[str]] = None
@@ -665,14 +825,18 @@ class Validator:
                     errors.append(f"Missing required key: {key}")
                     field_errors.setdefault(key, []).append("required")
         is_valid = len(errors) == 0
-        return ValidationResult(is_valid=is_valid, errors=errors, warnings=[], field_errors=field_errors)
+        return ValidationResult(
+            is_valid=is_valid, errors=errors, warnings=[], field_errors=field_errors
+        )
 
     def validate_enum(self, value: Any, allowed_values: List[Any]) -> ValidationResult:
         """Validate value is in allowed values."""
         if value not in allowed_values:
             return ValidationResult(
                 is_valid=False,
-                errors=[f"Value '{value}' must be one of: {', '.join(str(v) for v in allowed_values)}"],
+                errors=[
+                    f"Value '{value}' must be one of: {', '.join(str(v) for v in allowed_values)}"
+                ],
                 warnings=[],
                 field_errors={"value": ["invalid_enum"]},
             )
@@ -688,9 +852,7 @@ class Validator:
                 field_errors={"url": ["invalid_type"]},
             )
         _url_re = re.compile(
-            r"^(https?|ftp)://"
-            r"(?:[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+)"
-            r"$",
+            r"^(https?|ftp)://" r"(?:[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+)" r"$",
             re.IGNORECASE,
         )
         if not _url_re.match(url):
@@ -774,7 +936,12 @@ class Validator:
                 field_errors.setdefault("tokens", []).append("limit_exceeded")
 
         is_valid = len(errors) == 0
-        return ValidationResult(is_valid=is_valid, errors=errors, warnings=warnings, field_errors=field_errors)
+        return ValidationResult(
+            is_valid=is_valid,
+            errors=errors,
+            warnings=warnings,
+            field_errors=field_errors,
+        )
 
     def validate_permissions(
         self, action: str, user_permissions: List[str]
@@ -789,11 +956,15 @@ class Validator:
             )
         # Support wildcard permission
         if "*" in user_permissions or action in user_permissions:
-            return ValidationResult(is_valid=True, errors=[], warnings=[], field_errors={})
+            return ValidationResult(
+                is_valid=True, errors=[], warnings=[], field_errors={}
+            )
         # Support namespace prefix matching (e.g. "agents:*" grants "agents:read")
         action_ns = action.split(":")[0]
         if f"{action_ns}:*" in user_permissions:
-            return ValidationResult(is_valid=True, errors=[], warnings=[], field_errors={})
+            return ValidationResult(
+                is_valid=True, errors=[], warnings=[], field_errors={}
+            )
         return ValidationResult(
             is_valid=False,
             errors=[f"Permission denied for action: '{action}'"],
@@ -820,7 +991,9 @@ class Validator:
             warnings.append(
                 f"Approaching rate limit: {request_count}/{limit} requests in {period}"
             )
-        return ValidationResult(is_valid=True, errors=[], warnings=warnings, field_errors={})
+        return ValidationResult(
+            is_valid=True, errors=[], warnings=warnings, field_errors={}
+        )
 
     # ==================== Rule Management ====================
 
@@ -910,11 +1083,17 @@ class Validator:
                 continue
             result = validator_func(value, **rule.params)
             if not result.is_valid:
-                if rule.level == ValidationLevel.STRICT or self.level == ValidationLevel.STRICT:
+                if (
+                    rule.level == ValidationLevel.STRICT
+                    or self.level == ValidationLevel.STRICT
+                ):
                     all_errors.append(rule.message)
                     if rule.field:
                         all_field_errors.setdefault(rule.field, []).append(rule.message)
-                elif rule.level == ValidationLevel.LENIENT or self.level == ValidationLevel.LENIENT:
+                elif (
+                    rule.level == ValidationLevel.LENIENT
+                    or self.level == ValidationLevel.LENIENT
+                ):
                     all_warnings.append(rule.message)
                 else:
                     all_errors.append(rule.message)

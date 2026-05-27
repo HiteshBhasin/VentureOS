@@ -1,5 +1,5 @@
 # Code generation agent
-import re
+import re, os, sys
 from typing import Any, Dict, List, Optional
 from .base_agent import BaseAgent
 from tools.code_executor import CodeExecutor
@@ -138,23 +138,41 @@ class CodingAgent(BaseAgent):
         5. Each capability listed above becomes both a routing key in `execute_task` and a private method.
         6. Each private method must call `self._invoke_llm(prompt, system_prompt)` to do its work.
         7. On an unknown type, return `{{"status": "error", "error": f"Unknown task type: {{task.get('type')}}"}}`.
-        8. Return ONLY raw Python code — no markdown fences, no explanation."""
-
+        8. Return ONLY raw Python code — no markdown fences, no explanation.
+        
+        """
+        # ---------------prompt ended-----------------------------------------------------------------------------------
         system_prompt = (
             "You are an expert Python engineer writing AI agent classes. "
             "Output only valid Python code. No markdown, no prose."
         )
-
+        previous_errors = []
         raw = self._invoke_llm(prompt=prompt, system_prompt=system_prompt) or ""
 
         # Strip accidental markdown code fences
         code = re.sub(r"^```[\w]*\n?", "", raw.strip(), flags=re.MULTILINE)
         code = re.sub(r"```$", "", code.strip())
+        from core.validator import Validator
 
         # Determine save path (default: agents/ next to this file)
         if not save_path:
             agents_dir = os.path.dirname(os.path.abspath(__file__))
             save_path = os.path.join(agents_dir, file_name)
+        validator = Validator()
+        validation = validator.validate_generated_agent_code(
+            code=code, expected_class_name=class_name, capabilities=capabilities or []
+        )
+        if not validation.is_valid:
+            errors = {
+                "status": "error",
+                "type": "generate_agent",
+                "errors": validation.errors,
+                "validation_details": validation.warnings,
+                "code": code,
+            }
+            previous_errors.append(errors)
+
+            return errors
 
         with open(save_path, "w", encoding="utf-8") as f:
             f.write(code)
