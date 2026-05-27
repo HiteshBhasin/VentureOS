@@ -269,6 +269,7 @@ class Orchestrator:
             if last:
                 prior_context = f"\n\nPrior run context:\n{last}"
         # inject into the user_input or the meta analysis prompt
+       
         try:
             from .meta_agent import Meta_agent
 
@@ -1044,37 +1045,7 @@ class Orchestrator:
             correlation_id = self.get_correlation_id()
             self.store_in_memory(f"execution:{correlation_id}", results)
 
-    # ==================== LLM ROUTING ====================
-
-    def route_llm_request(
-        self, prompt: str, model_preference: Optional[str] = None
-    ) -> Any:
-        """Route LLM request to appropriate model via router."""
-        if self.llm_router and hasattr(self.llm_router, "route"):
-            return self.llm_router.route(
-                request={
-                    "prompt": prompt,
-                    "model_preference": model_preference,
-                    "correlation_id": self.get_correlation_id(),
-                }
-            )
-        return self.invoke_llm(prompt)
-
-    def invoke_llm(
-        self,
-        prompt: str,
-        system_prompt: Optional[str] = None,
-        model: Optional[str] = None,
-    ) -> str:
-        """Invoke LLM with prompt and optional system prompt."""
-        return self.llm.invoke(prompt, system_prompt or "")
-
-    def select_optimal_model(self, task: Any) -> str:
-        """Select best model for task based on complexity and budget."""
-        if self.llm_router and hasattr(self.llm_router, "select_model"):
-            return self.llm_router.select_model(task)
-        return self.config.get("default_model", "gpt-4o-mini")
-
+   
     # ==================== TOOL MANAGEMENT ====================
 
     def register_tool(self, tool: Any, handler) -> None:
