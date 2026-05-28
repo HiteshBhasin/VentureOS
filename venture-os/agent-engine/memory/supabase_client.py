@@ -89,5 +89,5 @@ if __name__ == "__main__":
     #         "is_active": True,
     #     },
     # )
-    records = retreieve("profiles", {"name": "John Doe"}, columns="name, email")
-    print(f"Retrieved records: {records}")
+    # records = retreieve("profiles", {"name": "John Doe"}, columns="name, email")
+    # print(f"Retrieved records: {records}")
