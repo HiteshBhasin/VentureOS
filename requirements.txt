@@ -22,6 +22,7 @@ numpy
 scikit-learn
 fastapi-mail
 tiktoken
+setuptools
 # ---------------security----------
 pyOTP
 two-fast-auth
@@ -33,6 +34,7 @@ redis
 pymongo
 #----------------AI---------------
 cohere
-mastral
+mistralai
 openai
 anthropic #using claude for this.
+

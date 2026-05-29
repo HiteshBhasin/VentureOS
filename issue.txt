@@ -1,0 +1,4 @@
+false positive in "_DANGEROUS_PATTERNS"
+llm_router` never used in `process_user_request
+BudgetManager monitors but never gates LLM calls
+TaskGraph not driving `process_user_request` execution
