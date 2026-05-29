@@ -7,6 +7,7 @@ while true; do
 
     if git push origin sub_dev; then
         echo "Changes pushed successfully."
+        break
     else
         echo "Push failed. Try again? (y/n)"
         read retry
