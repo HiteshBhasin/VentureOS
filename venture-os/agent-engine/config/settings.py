@@ -3,8 +3,8 @@ from typing import List, Optional, Dict, Any
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from functools import lru_cache
+from pathlib import Path
 import os
-
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
@@ -196,7 +196,7 @@ class Settings(BaseSettings):
     )
 
     class Config:
-        env_file = ".env"
+        env_file = str(Path(__file__).resolve().parents[3] / ".env")
         env_file_encoding = "utf-8"
         case_sensitive = True
         extra = "ignore"

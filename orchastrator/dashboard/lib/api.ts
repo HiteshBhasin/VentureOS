@@ -1,11 +1,16 @@
 import { Agent, CreateAgentRequest } from '@/types/agent';
 import { Task, ActiveGoal, SystemStatus, CreateTaskRequest } from '@/types/task';
+import { getToken } from '@/lib/auth';
 
 const BASE = '/api';
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getToken();
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     ...init,
   });
   if (!res.ok) {

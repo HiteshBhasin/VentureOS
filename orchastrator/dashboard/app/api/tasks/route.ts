@@ -64,11 +64,13 @@ async function tryBackend(path: string, init?: RequestInit) {
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const type = searchParams.get('type');
+  const auth = request.headers.get('Authorization') ?? '';
+  const authHeader = { Authorization: auth };
 
   // Return active goal info when ?type=goal
   if (type === 'goal') {
     try {
-      const data = await tryBackend('/system/goal');
+      const data = await tryBackend('/system/goal', { headers: authHeader });
       return NextResponse.json(data);
     } catch {
       return NextResponse.json({ goal: MOCK_ACTIVE_GOAL, source: 'mock' });
@@ -78,7 +80,7 @@ export async function GET(request: NextRequest) {
   try {
     const status = searchParams.get('status');
     const query = status ? `?status=${status}` : '';
-    const data = await tryBackend(`/tasks${query}`);
+    const data = await tryBackend(`/tasks${query}`, { headers: authHeader });
     return NextResponse.json(data);
   } catch {
     return NextResponse.json({ tasks: MOCK_TASKS, source: 'mock' });
@@ -88,9 +90,10 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    const auth = request.headers.get('Authorization') ?? '';
     const data = await tryBackend('/tasks', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': auth },
       body: JSON.stringify(body),
     });
     return NextResponse.json(data, { status: 201 });

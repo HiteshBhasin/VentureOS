@@ -7,6 +7,7 @@ import { useSystemStream } from '@/hooks/useSystemStream';
 import { useActiveGoal } from '@/hooks/useActiveGoal';
 import { Agent } from '@/types/agent';
 import { StreamLog } from '@/types/task';
+import {createTask} from "@/lib/api";
 
 // ── helpers ──────────────────────────────────────────────
 
@@ -100,11 +101,11 @@ export default function DashboardPage() {
   const [objective, setObjective] = useState('');
   const [submitted, setSubmitted] = useState<string | null>(null);
 
-  const handleExecute = useCallback(() => {
+  const handleExecute = useCallback(async () => {
     const trimmed = objective.trim();
     if (!trimmed) return;
     setSubmitted(trimmed);
-    // TODO: send to backend when ready
+    await createTask({ title: trimmed, description: '', priority: 'medium' });
   }, [objective]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {

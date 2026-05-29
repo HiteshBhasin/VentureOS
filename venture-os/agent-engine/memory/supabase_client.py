@@ -3,8 +3,10 @@ from supabase import create_client, Client
 from dotenv import load_dotenv
 import psycopg2
 import os
+from pathlib import Path
 
-load_dotenv()
+# Load from root .env (VentureOS/.env)
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[3] / ".env")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY")
@@ -69,6 +71,7 @@ def retreieve(table: str, query: dict, columns: str) -> list:
 
 # Example usage — creates the profiles table
 if __name__ == "__main__":
+    pass
     # create_table_raw("""
     #     CREATE TABLE IF NOT EXISTS profiles (
     #         id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),

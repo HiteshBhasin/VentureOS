@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 const BACKEND = process.env.BACKEND_URL ?? 'http://localhost:8000';
 
@@ -16,10 +16,12 @@ const MOCK_LOGS = [
   '[PROC] GENERATING AD COPY VARIANTS...',
 ];
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const auth = request.headers.get('Authorization') ?? '';
   // Try to stream from backend first
   try {
     const upstream = await fetch(`${BACKEND}/api/v1/system/stream`, {
+      headers: { Authorization: auth },
       signal: AbortSignal.timeout(3000),
     });
     if (upstream.ok && upstream.body) {

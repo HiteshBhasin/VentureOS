@@ -1,17 +1,23 @@
 """FastAPI entry point for VentureOS Agent Engine."""
 
 import os
+import sys
+from pathlib import Path
+
+# Allow running as `python main.py` from inside api/ OR as a module from agent-engine/
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from datetime import datetime, timezone
 from typing import Any, Dict
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .middleware.auth import AuthMiddleware
-from .routes.agent_routes import router as agent_router
-from .routes.auth_routes import router as auth_router
-from .routes.memory_routes import router as memory_router
-from .routes.task_routes import router as task_router
+from api.middleware.auth import AuthMiddleware
+from api.routes.agent_routes import router as agent_router
+from api.routes.auth_routes import router as auth_router
+from api.routes.memory_routes import router as memory_router
+from api.routes.task_routes import router as task_router
 
 # Comma-separated list of allowed origins in .env, e.g.:
 # ALLOWED_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
@@ -46,4 +52,9 @@ def health_check() -> Dict[str, Any]:
         "version": "2.0.4",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=True)
 

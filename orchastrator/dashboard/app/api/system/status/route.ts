@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 const BACKEND = process.env.BACKEND_URL ?? 'http://localhost:8000';
 
@@ -12,9 +12,11 @@ const MOCK_STATUS = {
   latency_ms: 42,
 };
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const auth = request.headers.get('Authorization') ?? '';
   try {
     const res = await fetch(`${BACKEND}/api/v1/system/status`, {
+      headers: { Authorization: auth },
       signal: AbortSignal.timeout(3000),
     });
     if (!res.ok) throw new Error(`Backend ${res.status}`);
