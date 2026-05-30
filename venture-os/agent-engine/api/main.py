@@ -4,6 +4,10 @@ import os
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # Allow running as `python main.py` from inside api/ OR as a module from agent-engine/
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -19,9 +23,17 @@ from api.routes.auth_routes import router as auth_router
 from api.routes.memory_routes import router as memory_router
 from api.routes.task_routes import router as task_router
 
+from core.llm_class import LLM  # noqa: F401
+from core.orchestrator import Orchestrator  # noqa: F401
+
 # Comma-separated list of allowed origins in .env, e.g.:
 # ALLOWED_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+
+LLM_MODEL = os.getenv("LLM_MODEL", "command-a-03-2025")
+llm = LLM(model=LLM_MODEL)
+orchestrator = Orchestrator(llm=llm)
+
 
 app = FastAPI(
     title="VentureOS Agent Engine",
@@ -44,6 +56,8 @@ app.include_router(agent_router, prefix="/api/v1")
 app.include_router(task_router, prefix="/api/v1")
 app.include_router(memory_router, prefix="/api/v1")
 
+app.state.orchestrator = orchestrator  # type: ignore
+
 
 @app.get("/health")
 def health_check() -> Dict[str, Any]:
@@ -56,5 +70,5 @@ def health_check() -> Dict[str, Any]:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=True)
 
+    uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=True)

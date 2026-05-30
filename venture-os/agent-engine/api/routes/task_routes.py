@@ -1,6 +1,6 @@
 # Task endpoints — all queries filtered by authenticated user_id
 from typing import Any, Dict, List, Optional
-
+import asyncio
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 from pydantic import BaseModel
 
@@ -9,10 +9,18 @@ from memory.supabase_client import engine
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
-VALID_STATUSES = {"pending", "queued", "running", "paused", "completed", "failed", "cancelled"}
+VALID_STATUSES = {
+    "pending",
+    "queued",
+    "running",
+    "paused",
+    "completed",
+    "failed",
+    "cancelled",
+}
 VALID_PRIORITIES = {"low", "medium", "high", "critical"}
 
-from routes.adaptor import user_input_receiever
+from routes.adaptor import get_orchastrator
 
 # ==================== Request Models ====================
 
@@ -85,10 +93,14 @@ async def get_task(
 async def create_task(
     body: CreateTaskRequest,
     user_id: str = Depends(get_current_user),
+    orchastrator: Any = Depends(get_orchastrator),
 ) -> Dict[str, Any]:
     """Create a new task for the authenticated user."""
     if body.priority not in VALID_PRIORITIES:
-        raise HTTPException(status_code=400, detail=f"Invalid priority. Must be one of: {VALID_PRIORITIES}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid priority. Must be one of: {VALID_PRIORITIES}",
+        )
     data = {
         "user_id": user_id,
         "title": body.title,
@@ -102,10 +114,13 @@ async def create_task(
         "goal_id": body.goal_id,
     }
     res = engine.table("tasks").insert(data).execute()
-    user_input_receiever(data["description"])
-    
     if not res.data:
         raise HTTPException(status_code=500, detail="Failed to create task.")
+    asyncio.get_event_loop().run_in_executor(
+        None,
+        orchastrator.process_user_request,
+        f"{body.title}: {body.description}",
+    )
     return res.data[0]
 
 
@@ -120,7 +135,9 @@ async def update_task(
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update.")
     if "status" in updates and updates["status"] not in VALID_STATUSES:
-        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {VALID_STATUSES}")
+        raise HTTPException(
+            status_code=400, detail=f"Invalid status. Must be one of: {VALID_STATUSES}"
+        )
     res = (
         engine.table("tasks")
         .update(updates)
@@ -162,7 +179,9 @@ async def update_task_status(
 ) -> Dict[str, Any]:
     """Quickly update only the status of a task."""
     if status not in VALID_STATUSES:
-        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {VALID_STATUSES}")
+        raise HTTPException(
+            status_code=400, detail=f"Invalid status. Must be one of: {VALID_STATUSES}"
+        )
     res = (
         engine.table("tasks")
         .update({"status": status})
@@ -173,7 +192,6 @@ async def update_task_status(
     if not res.data:
         raise HTTPException(status_code=404, detail="Task not found.")
     return res.data[0]
-
 
 
 # ==================== Task Execution ====================

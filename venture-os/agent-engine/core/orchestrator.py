@@ -23,7 +23,6 @@ from agents.research_agent import ResearchAgent
 from agents.review_agent import ReviewAgent
 from agents.runtime_agent import RuntimeAgent
 
-
 logger = logging.getLogger(__name__)
 
 # Maps agent type → the most general task type that agent accepts
@@ -248,12 +247,8 @@ class Orchestrator:
         logger.error(f"Budget exceeded: {budget_type}")
 
     # ==================== REQUEST PROCESSING ====================
-    from ..api.routes.adaptor import user_input_receiever
-    
-    if user_input_receiever:
-         user_input = user_input_receiever
+
     def process_user_request(self, user_input: str) -> Dict[str, Any]:
-        
         """Backbone entry point — the Orchestrator owns every execution step:
         1. Meta_agent analyses goal and plans the specialist roster.
         2. Orchestrator spawns each specialist agent via AgentFactory.
@@ -273,7 +268,7 @@ class Orchestrator:
             if last:
                 prior_context = f"\n\nPrior run context:\n{last}"
         # inject into the user_input or the meta analysis prompt
-       
+
         try:
             from .meta_agent import Meta_agent
 
@@ -298,7 +293,7 @@ class Orchestrator:
                         agent_name=agent_name,
                         capabilities=spec.get("capabilities", []),
                     )
-                    
+
                     self.register_active_agent(agent)
                     spawned[agent_name] = {
                         "agent": agent,
@@ -589,7 +584,11 @@ class Orchestrator:
         import time
 
         agent_id = getattr(agent, "agent_id", str(id(agent)))
-        task_id = task.get("type", str(task)) if isinstance(task, dict) else getattr(task, "task_id", str(task))
+        task_id = (
+            task.get("type", str(task))
+            if isinstance(task, dict)
+            else getattr(task, "task_id", str(task))
+        )
         trace = self.start_execution_trace(task)
         start = time.monotonic()
         try:
@@ -605,7 +604,9 @@ class Orchestrator:
                     else "research"
                 )
                 task_type = _AGENT_DEFAULT_TASK.get(agent_type, "generate_report")
-                description = getattr(task, "description", "") or getattr(task, "name", "")
+                description = getattr(task, "description", "") or getattr(
+                    task, "name", ""
+                )
                 task_input = {
                     "type": task_type,
                     "description": description,
@@ -1049,7 +1050,6 @@ class Orchestrator:
             correlation_id = self.get_correlation_id()
             self.store_in_memory(f"execution:{correlation_id}", results)
 
-   
     # ==================== TOOL MANAGEMENT ====================
 
     def register_tool(self, tool: Any, handler) -> None:
