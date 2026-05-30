@@ -1,18 +1,25 @@
 import { Agent, CreateAgentRequest } from '@/types/agent';
 import { Task, ActiveGoal, SystemStatus, CreateTaskRequest } from '@/types/task';
-import { getToken } from '@/lib/auth';
+import { getToken, logout as clearLocalAuth } from '@/lib/auth';
 
 const BASE = '/api';
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
+  const { headers: initHeaders, ...restInit } = init ?? {};
   const res = await fetch(`${BASE}${path}`, {
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(initHeaders as Record<string, string> | undefined),
     },
-    ...init,
+    ...restInit,
   });
+  if (res.status === 401) {
+    clearLocalAuth();
+    if (typeof window !== 'undefined') window.location.href = '/login';
+    throw new Error('Session expired. Please log in again.');
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
     throw new Error(`API ${res.status}: ${text}`);

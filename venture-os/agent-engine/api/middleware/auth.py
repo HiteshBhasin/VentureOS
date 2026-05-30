@@ -1,12 +1,26 @@
 # Authentication middleware — Supabase JWT verification
 import os
 
-import jwt
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from supabase import create_client, Client
+from dotenv import load_dotenv
+from pathlib import Path
 
-SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[4] / ".env")
+
+_SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+_SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY", "")
+_supabase: Client | None = None
+
+
+def _get_supabase() -> Client:
+    global _supabase
+    if _supabase is None:
+        _supabase = create_client(_SUPABASE_URL, _SUPABASE_KEY)
+    return _supabase
+
 
 # Routes that do NOT require a valid JWT
 PUBLIC_PATHS = {
@@ -37,17 +51,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         token = auth_header[7:].strip()
         try:
-            payload = jwt.decode(
-                token,
-                SUPABASE_JWT_SECRET,
-                algorithms=["HS256"],
-                audience="authenticated",
-            )
-            request.state.user_id = payload["sub"]
-            request.state.user_email = payload.get("email", "")
-        except jwt.ExpiredSignatureError:
-            return JSONResponse(status_code=401, content={"detail": "Token has expired."})
-        except jwt.InvalidTokenError:
+            user_response = _get_supabase().auth.get_user(token)
+            if user_response is None or user_response.user is None:
+                return JSONResponse(status_code=401, content={"detail": "Invalid token."})
+            request.state.user_id = user_response.user.id
+            request.state.user_email = user_response.user.email or ""
+        except Exception:
             return JSONResponse(status_code=401, content={"detail": "Invalid token."})
 
         return await call_next(request)

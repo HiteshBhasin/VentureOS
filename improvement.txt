@@ -136,3 +136,22 @@ Given your current codebase state, the highest-ROI sequence would be:
 3. **Agent type classifier** — replace `AGENT_TYPE_KEYWORDS` keyword scoring; use HuggingFace datasets for cold-start data.
 4. **LLM routing with bandit** — once you have 100+ run logs, contextual bandit outperforms all static strategies.
 5. **Failure prediction** — requires the most historical data, so implement last.
+
+
+3. The Backend Must Actually Execute the Task
+Right now, saving to the DB is all that happens — nothing triggers the orchestrator
+The task_routes.py POST handler needs to, after saving the task, hand it off to the orchestrator or meta_agent to start execution
+The orchestrator then needs to decompose the objective, spawn the right agents, and run them
+This is the biggest missing piece — the connection between "task saved" and "task running"
+
+4. Progress Must Be Streamed Back
+The frontend has useSystemStream() listening to /api/v1/system/stream via SSE
+The frontend has useAgents() polling /api/v1/agents every 5 seconds
+The frontend has useActiveGoal() polling for goal/task status
+The backend's system/stream, system/status, and system/goal endpoints need to return real live data from the running orchestrator — right now they likely return nothing meaningful
+The agents in the DB need their status, progress, and activity fields updated as work proceeds
+
+5. Frontend Must Reflect the Updates
+The useAgents hook already polls every 5s — it will auto-update agent cards once agents have real data
+The useSystemStream hook already listens to SSE — log lines will appear once the stream emits real events
+No frontend changes needed — it's already wired for live updates

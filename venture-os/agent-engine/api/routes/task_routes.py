@@ -12,6 +12,7 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 VALID_STATUSES = {"pending", "queued", "running", "paused", "completed", "failed", "cancelled"}
 VALID_PRIORITIES = {"low", "medium", "high", "critical"}
 
+from routes.adaptor import user_input_receiever
 
 # ==================== Request Models ====================
 
@@ -101,6 +102,8 @@ async def create_task(
         "goal_id": body.goal_id,
     }
     res = engine.table("tasks").insert(data).execute()
+    user_input_receiever(data["description"])
+    
     if not res.data:
         raise HTTPException(status_code=500, detail="Failed to create task.")
     return res.data[0]

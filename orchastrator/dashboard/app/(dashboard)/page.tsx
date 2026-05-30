@@ -100,12 +100,19 @@ export default function DashboardPage() {
 
   const [objective, setObjective] = useState('');
   const [submitted, setSubmitted] = useState<string | null>(null);
+  const [execError, setExecError] = useState<string | null>(null);
 
   const handleExecute = useCallback(async () => {
     const trimmed = objective.trim();
     if (!trimmed) return;
+    setExecError(null);
     setSubmitted(trimmed);
-    await createTask({ title: trimmed, description: '', priority: 'medium' });
+    try {
+      await createTask({ title: trimmed, description: '', priority: 'medium' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setExecError(msg);
+    }
   }, [objective]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -184,10 +191,18 @@ export default function DashboardPage() {
       </div>
 
       {/* Submitted objective feedback */}
-      {submitted && (
+      {submitted && !execError && (
         <div className="flex items-center gap-2 px-1 -mt-2">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
           <span className="text-[10px] text-emerald-400 tracking-widest uppercase">OBJECTIVE SET: {submitted}</span>
+        </div>
+      )}
+
+      {/* Error feedback */}
+      {execError && (
+        <div className="flex items-center gap-2 px-1 -mt-2">
+          <span className="h-1.5 w-1.5 rounded-full bg-red-400 shrink-0" />
+          <span className="text-[10px] text-red-400 tracking-widest uppercase truncate" title={execError}>ERROR: {execError}</span>
         </div>
       )}
 

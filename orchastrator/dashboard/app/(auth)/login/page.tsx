@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { setToken, setUser } from '@/lib/auth';
 
 export default function LoginPage() {
@@ -64,6 +65,9 @@ export default function LoginPage() {
         >
           {loading ? 'Authenticating...' : 'Login'}
         </button>
+        <Link href="/signup" className="text-[10px] text-zinc-500 hover:text-zinc-300 tracking-widest text-center transition-colors">
+          Don&apos;t have an account? Sign up
+        </Link>
       </form>
     </div>
   );

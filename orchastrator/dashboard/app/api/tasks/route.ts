@@ -57,8 +57,7 @@ async function tryBackend(path: string, init?: RequestInit) {
     ...init,
     signal: AbortSignal.timeout(3000),
   });
-  if (!res.ok) throw new Error(`Backend ${res.status}`);
-  return res.json();
+  return res;
 }
 
 export async function GET(request: NextRequest) {
@@ -70,8 +69,9 @@ export async function GET(request: NextRequest) {
   // Return active goal info when ?type=goal
   if (type === 'goal') {
     try {
-      const data = await tryBackend('/system/goal', { headers: authHeader });
-      return NextResponse.json(data);
+      const res = await tryBackend('/system/goal', { headers: authHeader });
+      const data = await res.json();
+      return NextResponse.json(data, { status: res.status });
     } catch {
       return NextResponse.json({ goal: MOCK_ACTIVE_GOAL, source: 'mock' });
     }
@@ -80,8 +80,9 @@ export async function GET(request: NextRequest) {
   try {
     const status = searchParams.get('status');
     const query = status ? `?status=${status}` : '';
-    const data = await tryBackend(`/tasks${query}`, { headers: authHeader });
-    return NextResponse.json(data);
+    const res = await tryBackend(`/tasks${query}`, { headers: authHeader });
+    const data = await res.json();
+    return NextResponse.json(data, { status: res.status });
   } catch {
     return NextResponse.json({ tasks: MOCK_TASKS, source: 'mock' });
   }
@@ -91,12 +92,13 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const auth = request.headers.get('Authorization') ?? '';
-    const data = await tryBackend('/tasks', {
+    const res = await tryBackend('/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': auth },
       body: JSON.stringify(body),
     });
-    return NextResponse.json(data, { status: 201 });
+    const data = await res.json();
+    return NextResponse.json(data, { status: res.status });
   } catch {
     return NextResponse.json({ error: 'Backend unavailable' }, { status: 503 });
   }

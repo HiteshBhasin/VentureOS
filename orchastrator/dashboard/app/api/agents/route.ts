@@ -34,15 +34,15 @@ async function tryBackend(path: string, init?: RequestInit) {
     ...init,
     signal: AbortSignal.timeout(3000),
   });
-  if (!res.ok) throw new Error(`Backend ${res.status}`);
-  return res.json();
+  return res;
 }
 
 export async function GET(request: NextRequest) {
   const auth = request.headers.get('Authorization') ?? '';
   try {
-    const data = await tryBackend('/agents', { headers: { Authorization: auth } });
-    return NextResponse.json(data);
+    const res = await tryBackend('/agents', { headers: { Authorization: auth } });
+    const data = await res.json();
+    return NextResponse.json(data, { status: res.status });
   } catch {
     return NextResponse.json({ agents: MOCK_AGENTS, source: 'mock' });
   }
@@ -52,12 +52,13 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const auth = request.headers.get('Authorization') ?? '';
-    const data = await tryBackend('/agents', {
+    const res = await tryBackend('/agents', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': auth },
       body: JSON.stringify(body),
     });
-    return NextResponse.json(data, { status: 201 });
+    const data = await res.json();
+    return NextResponse.json(data, { status: res.status });
   } catch {
     return NextResponse.json({ error: 'Backend unavailable' }, { status: 503 });
   }

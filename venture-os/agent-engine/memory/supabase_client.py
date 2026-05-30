@@ -1,7 +1,6 @@
 from typing import Any, Dict
 from supabase import create_client, Client
 from dotenv import load_dotenv
-import psycopg2
 import os
 from pathlib import Path
 
@@ -30,6 +29,7 @@ def create_table_raw(sql: str) -> None:
     Requires DATABASE_URL in .env:
       DATABASE_URL=postgresql://postgres:<password>@db.<ref>.supabase.co:5432/postgres
     """
+    import psycopg2  # lazy import — only needed for raw DDL
     db_url = os.getenv("DATABASE_URL")
     if not db_url:
         raise EnvironmentError(

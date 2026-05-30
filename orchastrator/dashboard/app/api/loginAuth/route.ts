@@ -11,7 +11,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       body: JSON.stringify(body),
     });
     const data = await res.json();
-    return NextResponse.json(data, { status: res.status });
+    if (!res.ok) return NextResponse.json(data, { status: res.status });
+    return NextResponse.json(data);
   } catch {
     return NextResponse.json({ detail: 'Backend unavailable' }, { status: 503 });
   }

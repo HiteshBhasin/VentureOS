@@ -5,7 +5,7 @@ const BACKEND = process.env.BACKEND_URL ?? 'http://localhost:8000';
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     const body = await request.json();
-    const res = await fetch(`${BACKEND}/api/v1/auth/login`, {
+    const res = await fetch(`${BACKEND}/api/v1/auth/signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

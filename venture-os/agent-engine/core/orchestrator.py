@@ -248,8 +248,12 @@ class Orchestrator:
         logger.error(f"Budget exceeded: {budget_type}")
 
     # ==================== REQUEST PROCESSING ====================
-
+    from ..api.routes.adaptor import user_input_receiever
+    
+    if user_input_receiever:
+         user_input = user_input_receiever
     def process_user_request(self, user_input: str) -> Dict[str, Any]:
+        
         """Backbone entry point — the Orchestrator owns every execution step:
         1. Meta_agent analyses goal and plans the specialist roster.
         2. Orchestrator spawns each specialist agent via AgentFactory.
