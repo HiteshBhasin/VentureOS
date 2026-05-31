@@ -139,6 +139,7 @@ export default function DashboardPage() {
     { id: 'mr-001', name: 'MARKET_RESEARCHER', type: 'research' as const, status: 'active' as const, activity: 'SCRAPING', progress: 34, description: 'Extracting pricing models from 12 tier-1 competitors.', tokens_per_sec: 0, cost_estimate: 0, model: 'gpt-4o' },
   ];
 
+
   const pid = goal.pid || 48821;
   const memUsed = goal.memory_used_gb || status.memory_used_gb || 2.4;
   const memTotal = goal.memory_total_gb || status.memory_total_gb || 32;
