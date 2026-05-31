@@ -86,7 +86,7 @@ async def get_task(
     )
     if not res.data:
         raise HTTPException(status_code=404, detail="Task not found.")
-    return res.data
+    return {"task": res.data}
 
 
 @router.post("/", status_code=201)
@@ -121,7 +121,7 @@ async def create_task(
         orchastrator.process_user_request,
         f"{body.title}: {body.description}",
     )
-    return res.data[0]
+    return {}
 
 
 @router.patch("/{task_id}")
@@ -147,7 +147,7 @@ async def update_task(
     )
     if not res.data:
         raise HTTPException(status_code=404, detail="Task not found.")
-    return res.data[0]
+    return {"task": res.data[0]}
 
 
 @router.delete("/{task_id}")
@@ -191,7 +191,7 @@ async def update_task_status(
     )
     if not res.data:
         raise HTTPException(status_code=404, detail="Task not found.")
-    return res.data[0]
+    return {"task": res.data[0]}
 
 
 # ==================== Task Execution ====================

@@ -30,7 +30,7 @@ from core.orchestrator import Orchestrator  # noqa: F401
 # ALLOWED_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
 
-LLM_MODEL = os.getenv("LLM_MODEL", "command-a-03-2025")
+LLM_MODEL = os.getenv("gpt-04-model", "command-a-03-2025")
 llm = LLM(model=LLM_MODEL)
 orchestrator = Orchestrator(llm=llm)
 
