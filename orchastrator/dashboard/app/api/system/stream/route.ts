@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 
 const BACKEND = process.env.BACKEND_URL ?? 'http://localhost:8000';
 
-// Fallback log lines shown when backend is offline
+//Fallback log lines shown when backend is offline
 const FALLBACK_LOGS = [
   '[OK] ORCHESTRATOR ONLINE — BACKEND UNREACHABLE',
   '[PROC] ATTEMPTING RECONNECT TO AGENT ENGINE...',

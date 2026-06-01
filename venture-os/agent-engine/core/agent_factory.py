@@ -338,6 +338,10 @@ class AgentFactory:
                         logger.warning(
                             f"Attempt {attempt}/{max_retries}: generation not successful, retrying..."
                         )
+                        if attempt < max_retries:
+                            retry_delay = 15.0 * attempt  # 15s, 30s
+                            logger.warning(f"Waiting {retry_delay:.0f}s before retry {attempt + 1}...")
+                            time.sleep(retry_delay)
                         continue
 
                     validator = Validator()

@@ -81,6 +81,8 @@ class Orchestrator:
         self.register_default_agent_types()
         self.setup_event_subscriptions()
 
+        self.current_objectives:str
+        self.active_agents =[]
         logger.info("Orchestrator initialized successfully")
 
     def initialize_subsystems(self) -> None:
@@ -274,8 +276,14 @@ class Orchestrator:
 
             # ── Step 1: Meta_agent analyses the goal and decides which agents are needed ──
             meta = Meta_agent(llm=self.llm)
+            
             analysis = meta.analyze_user_requirement(user_input + prior_context)
             roster = meta._plan_agent_roster(analysis)
+            
+            if isinstance(roster, list):
+                if isinstance(roster[0].get("use_case"), dict):
+                    self.current_objectives = str(roster[0].get("use_case"))
+                    
             logger.info(
                 f"[{self._correlation_id}] Roster planned — "
                 f"{len(roster)} agents: {[r['agent_name'] for r in roster]}"
@@ -293,6 +301,7 @@ class Orchestrator:
                         agent_name=agent_name,
                         capabilities=spec.get("capabilities", []),
                     )
+                    self.active_agents.append(agent)
 
                     self.register_active_agent(agent)
                     spawned[agent_name] = {

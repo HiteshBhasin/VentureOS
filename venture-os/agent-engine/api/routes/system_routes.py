@@ -19,6 +19,7 @@ def get_system_status(request: Request) -> Dict[str, Any]:
     if orchestrator is not None:
         try:
             active_agents = len(getattr(orchestrator, "active_agents", {}))
+            print(active_agents)
         except Exception:
             pass
 
@@ -36,7 +37,8 @@ def get_active_goal(request: Request) -> Dict[str, Any]:
     goal: Optional[str] = None
     if orchestrator is not None:
         try:
-            goal = getattr(orchestrator, "current_objective", None)
+            goal = getattr(orchestrator, "current_objectives", None)
+            print(goal)
         except Exception:
             pass
 
