@@ -13,10 +13,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
 
     const data = await res.json();
-    if (res.status===200){
-          return NextResponse.redirect(new URL(`/dashboard`,request.url));
-      }
-    return NextResponse.json(data, { status: res.status });
+    if (!res.ok) return NextResponse.json(data, { status: res.status });
+    return NextResponse.json(data);
   } catch {
     return NextResponse.json({ detail: 'Backend unavailable' }, { status: 503 });
   }

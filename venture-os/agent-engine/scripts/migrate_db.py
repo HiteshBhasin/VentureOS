@@ -1,0 +1,139 @@
+"""
+Database migration — create all tables required by VentureOS agent-engine.
+
+Tables created:
+  - profiles      (mirrors Supabase auth.users for app-level data)
+  - agents        (AI agents created by users)
+  - tasks         (work items dispatched to agents)
+  - memory_items  (agent memory / context entries)
+
+Run from agent-engine/:
+    python scripts/migrate_db.py
+"""
+
+import os
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = ROOT.parents[1]
+sys.path.insert(0, str(ROOT))
+load_dotenv(dotenv_path=REPO_ROOT / ".env")
+
+import psycopg2
+
+DB_URL = os.getenv("DATABASE_URL")
+if not DB_URL:
+    print("ERROR: DATABASE_URL not set in .env")
+    sys.exit(1)
+
+MIGRATION = """
+-- ─────────────────────────────────────────────────────────
+-- Enable UUID extension (idempotent)
+-- ─────────────────────────────────────────────────────────
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- ─────────────────────────────────────────────────────────
+-- profiles
+-- ─────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.profiles (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email       TEXT NOT NULL,
+    name        TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ─────────────────────────────────────────────────────────
+-- agents
+-- ─────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.agents (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id         UUID NOT NULL,
+    name            TEXT NOT NULL,
+    type            TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    model           TEXT NOT NULL DEFAULT 'gpt-4',
+    status          TEXT NOT NULL DEFAULT 'idle',
+    activity        TEXT NOT NULL DEFAULT 'IDLE',
+    progress        INTEGER NOT NULL DEFAULT 0,
+    llm_config      JSONB NOT NULL DEFAULT '{}',
+    memory_config   JSONB NOT NULL DEFAULT '{}',
+    tool_config     JSONB NOT NULL DEFAULT '[]',
+    tokens_per_sec  FLOAT NOT NULL DEFAULT 0.0,
+    cost_estimate   FLOAT NOT NULL DEFAULT 0.0,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_agents_user_id ON public.agents(user_id);
+CREATE INDEX IF NOT EXISTS idx_agents_type    ON public.agents(type);
+CREATE INDEX IF NOT EXISTS idx_agents_status  ON public.agents(status);
+
+-- ─────────────────────────────────────────────────────────
+-- tasks
+-- ─────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.tasks (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id     UUID NOT NULL,
+    agent_id    UUID REFERENCES public.agents(id) ON DELETE SET NULL,
+    goal_id     UUID,
+    title       TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    type        TEXT NOT NULL DEFAULT 'custom',
+    status      TEXT NOT NULL DEFAULT 'pending',
+    priority    TEXT NOT NULL DEFAULT 'medium',
+    progress    INTEGER NOT NULL DEFAULT 0,
+    tags        JSONB NOT NULL DEFAULT '[]',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_user_id  ON public.tasks(user_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_agent_id ON public.tasks(agent_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status   ON public.tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_priority ON public.tasks(priority);
+
+-- ─────────────────────────────────────────────────────────
+-- memory_items
+-- ─────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.memory_items (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id     UUID NOT NULL,
+    agent_id    UUID REFERENCES public.agents(id) ON DELETE CASCADE,
+    key         TEXT NOT NULL,
+    value       JSONB NOT NULL DEFAULT '{}',
+    memory_type TEXT NOT NULL DEFAULT 'short_term',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_user_id  ON public.memory_items(user_id);
+CREATE INDEX IF NOT EXISTS idx_memory_agent_id ON public.memory_items(agent_id);
+"""
+
+
+def run_migration() -> None:
+    print("Connecting to database...")
+    conn = psycopg2.connect(DB_URL)
+    conn.autocommit = True
+    try:
+        with conn.cursor() as cur:
+            print("Running migration...")
+            cur.execute(MIGRATION)
+        print("\n✓  Migration complete. Tables created (or already existed):")
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+            )
+            tables = [row[0] for row in cur.fetchall()]
+            for t in tables:
+                print(f"   • {t}")
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__":
+    run_migration()

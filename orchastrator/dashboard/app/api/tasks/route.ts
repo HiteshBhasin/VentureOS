@@ -70,11 +70,14 @@ export async function GET(request: NextRequest) {
   if (type === 'goal') {
     try {
       const res = await tryBackend('/system/goal', { headers: authHeader });
-      const data = await res.json();
-      return NextResponse.json(data, { status: res.status });
+      if (res.ok) {
+        const data = await res.json();
+        return NextResponse.json(data);
+      }
     } catch {
-      return NextResponse.json({ goal: MOCK_ACTIVE_GOAL, source: 'mock' });
+      // fall through to mock
     }
+    return NextResponse.json({ goal: MOCK_ACTIVE_GOAL, source: 'mock' });
   }
 
   try {

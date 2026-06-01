@@ -21,6 +21,7 @@ from api.middleware.auth import AuthMiddleware
 from api.routes.agent_routes import router as agent_router
 from api.routes.auth_routes import router as auth_router
 from api.routes.memory_routes import router as memory_router
+from api.routes.system_routes import router as system_router
 from api.routes.task_routes import router as task_router
 
 from core.llm_class import LLM  # noqa: F401
@@ -55,6 +56,7 @@ app.include_router(auth_router, prefix="/api/v1")
 app.include_router(agent_router, prefix="/api/v1")
 app.include_router(task_router, prefix="/api/v1")
 app.include_router(memory_router, prefix="/api/v1")
+app.include_router(system_router, prefix="/api/v1")
 
 app.state.orchestrator = orchestrator  # type: ignore
 
@@ -72,3 +74,4 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=True)
+    

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { StreamLog } from '@/types/task';
+import { getToken } from '@/lib/auth';
 
 const MAX_LOGS = 50;
 
@@ -16,7 +17,11 @@ export function useSystemStream() {
         esRef.current.close();
       }
 
-      const es = new EventSource('/api/system/stream');
+      const token = getToken();
+      const url = token
+        ? `/api/system/stream?token=${encodeURIComponent(token)}`
+        : '/api/system/stream';
+      const es = new EventSource(url);
       esRef.current = es;
 
       es.onopen = () => setConnected(true);

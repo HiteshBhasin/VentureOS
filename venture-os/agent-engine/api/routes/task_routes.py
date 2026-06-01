@@ -20,7 +20,7 @@ VALID_STATUSES = {
 }
 VALID_PRIORITIES = {"low", "medium", "high", "critical"}
 
-from routes.adaptor import get_orchastrator
+from api.routes.adaptor import get_orchastrator
 
 # ==================== Request Models ====================
 

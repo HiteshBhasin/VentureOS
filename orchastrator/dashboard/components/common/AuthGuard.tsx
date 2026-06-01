@@ -1,19 +1,22 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { isAuthenticated } from '@/lib/auth';
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const authenticated = isAuthenticated();
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (!authenticated) {
+    const auth = isAuthenticated();
+    setAuthenticated(auth);
+    if (!auth) {
       router.replace('/login');
     }
-  }, [authenticated, router]);
+  }, [router]);
 
+  if (authenticated === null) return null; // still checking — matches server render
   if (!authenticated) return null;
   return <>{children}</>;
 }
