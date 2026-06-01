@@ -34,5 +34,13 @@ print("="*25)
 
 
 print("="*25)
-print(orchestrator._active_agents.get)
+print(orchestrator.active_agents)
+print("="*25)
+
+print("="*25)
+print(orchestrator.current_objectives)
+print("="*25)
+
+print("="*25)
+print(orchestrator)
 print("="*25)

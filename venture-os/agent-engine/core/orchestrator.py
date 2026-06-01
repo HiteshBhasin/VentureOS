@@ -81,8 +81,8 @@ class Orchestrator:
         self.register_default_agent_types()
         self.setup_event_subscriptions()
 
-        self.current_objectives:str
-        self.active_agents =[]
+        self.current_objectives: str = ""
+        self.active_agents: list = []
         logger.info("Orchestrator initialized successfully")
 
     def initialize_subsystems(self) -> None:
@@ -256,6 +256,7 @@ class Orchestrator:
         2. Orchestrator spawns each specialist agent via AgentFactory.
         3. Orchestrator executes every assigned task.
         4. Orchestrator compiles the final comprehensive report.
+        5. Always identify the objectives, If only simple questions like : "what is your name?" or "how many stars are in the sky". Do now spawn agents just answer the simple question. 
         """
         if not self.validate_user_input(user_input):
             return {"status": "error", "message": "Invalid or empty user input"}
@@ -279,10 +280,9 @@ class Orchestrator:
             
             analysis = meta.analyze_user_requirement(user_input + prior_context)
             roster = meta._plan_agent_roster(analysis)
-            
-            if isinstance(roster, list):
-                if isinstance(roster[0].get("use_case"), dict):
-                    self.current_objectives = str(roster[0].get("use_case"))
+            if roster:
+                # use_case is always a plain-English string per the meta-agent schema
+                self.current_objectives = analysis.get("primary_goal") or str(roster[0].get("use_case", ""))
                     
             logger.info(
                 f"[{self._correlation_id}] Roster planned — "
