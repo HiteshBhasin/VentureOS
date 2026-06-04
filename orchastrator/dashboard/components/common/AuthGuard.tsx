@@ -6,15 +6,17 @@ import { isAuthenticated } from '@/lib/auth';
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  // Lazy initializer: null on server (SSR safe), actual token check on client
+  const [authenticated] = useState<boolean | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return isAuthenticated();
+  });
 
   useEffect(() => {
-    const auth = isAuthenticated();
-    setAuthenticated(auth);
-    if (!auth) {
+    if (authenticated === false) {
       router.replace('/login');
     }
-  }, [router]);
+  }, [authenticated, router]);
 
   if (authenticated === null) return null; // still checking — matches server render
   if (!authenticated) return null;

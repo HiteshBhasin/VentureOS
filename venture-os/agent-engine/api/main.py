@@ -72,6 +72,17 @@ def health_check() -> Dict[str, Any]:
 
 if __name__ == "__main__":
     import uvicorn
+    import logging
+
+    # Configure logging to reduce noise
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO"),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    
+    # Reduce debug noise from uvicorn
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn").setLevel(logging.INFO)
 
     uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=True)
     

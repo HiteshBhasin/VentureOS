@@ -16,13 +16,19 @@ export async function GET(request: NextRequest) {
     ?? (request.nextUrl.searchParams.get('token')
         ? `Bearer ${request.nextUrl.searchParams.get('token')}`
         : '');
-
+  console.log('=== Backend Stream Connection Debug ===');
+  console.log('Backend URL:', BACKEND);
+  console.log('Auth token present:', !!auth);
+  console.log('Full endpoint:', `${BACKEND}/api/v1/system/stream`);
   // Try to proxy the real backend SSE stream
   try {
     const upstream = await fetch(`${BACKEND}/api/v1/system/stream`, {
       headers: { Authorization: auth },
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(5000), // Increased from 3s to 5s to reduce reconnection thrashing
     });
+    console.log('Response status:', upstream.status);
+    console.log('Response ok:', upstream.ok);
+    console.log('Response headers:', Object.fromEntries(upstream.headers.entries()));
     if (upstream.ok && upstream.body) {
       // Pipe backend stream through; abort when client disconnects
       return new Response(upstream.body, {
@@ -33,13 +39,19 @@ export async function GET(request: NextRequest) {
         },
       });
     }
-  } catch {
-    // fall through to fallback stream
+  } catch(error) {
+    console.error('❌ Connection failed:', error);
+    console.error('Error details:', {
+      name: error instanceof Error ? error.name : 'Unknown',
+      message: error instanceof Error ? error.message : String(error),
+      cause: error instanceof Error ? error.cause : undefined
+    });
   }
 
-  // Fallback SSE stream — emits a status line every 3s until client disconnects
+  // Fallback SSE stream — emits a status line every 3s, max 10 times (30s total)
   const abortSignal = request.signal;
   let idx = 0;
+  const MAX_FALLBACK_ITERATIONS = 10; // Prevent infinite loop
 
   const stream = new ReadableStream({
     start(controller) {
@@ -51,7 +63,11 @@ export async function GET(request: NextRequest) {
       const enc = new TextEncoder();
 
       const send = () => {
-        if (abortSignal.aborted) return;
+        if (abortSignal.aborted || idx >= MAX_FALLBACK_ITERATIONS) {
+          clearInterval(timer);
+          controller.close();
+          return;
+        }
         const now = new Date();
         const time = now.toLocaleTimeString('en-US', { hour12: false });
         const msg = FALLBACK_LOGS[idx % FALLBACK_LOGS.length];
