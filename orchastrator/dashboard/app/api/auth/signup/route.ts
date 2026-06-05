@@ -11,7 +11,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       body: JSON.stringify(body),
     });
     const data = await res.json();
+    if (res.status === 200) {
+        NextResponse.redirect(new URL('/login', request.url))
+    }
     return NextResponse.json(data, { status: res.status });
+
   } catch {
     return NextResponse.json({ detail: 'Backend unavailable' }, { status: 503 });
   }

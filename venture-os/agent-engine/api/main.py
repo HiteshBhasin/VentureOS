@@ -21,6 +21,7 @@ from api.middleware.auth import AuthMiddleware
 from api.routes.agent_routes import router as agent_router
 from api.routes.auth_routes import router as auth_router
 from api.routes.memory_routes import router as memory_router
+from api.routes.system_routes import router as system_router
 from api.routes.task_routes import router as task_router
 
 from core.llm_class import LLM  # noqa: F401
@@ -30,8 +31,8 @@ from core.orchestrator import Orchestrator  # noqa: F401
 # ALLOWED_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
 
-GPT_MODEL = os.getenv("GPT_MODEL", "command-a-03-2025")
-llm = LLM(model=GPT_MODEL)
+LLM_MODEL = os.getenv("gpt-04-model", "command-a-03-2025")
+llm = LLM(model=LLM_MODEL)
 orchestrator = Orchestrator(llm=llm)
 
 
@@ -55,6 +56,7 @@ app.include_router(auth_router, prefix="/api/v1")
 app.include_router(agent_router, prefix="/api/v1")
 app.include_router(task_router, prefix="/api/v1")
 app.include_router(memory_router, prefix="/api/v1")
+app.include_router(system_router, prefix="/api/v1")
 
 app.state.orchestrator = orchestrator  # type: ignore
 
@@ -70,5 +72,16 @@ def health_check() -> Dict[str, Any]:
 
 if __name__ == "__main__":
     import uvicorn
+    import logging
+
+    # Configure logging to reduce noise
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO"),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+    # Reduce debug noise from uvicorn
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn").setLevel(logging.INFO)
 
     uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=True)

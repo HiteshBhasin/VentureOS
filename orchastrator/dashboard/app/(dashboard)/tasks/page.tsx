@@ -124,9 +124,9 @@ export default function TasksPage() {
     { id: 'task-003', title: 'Ad Copy Generation', description: 'Waiting for persona completion to generate tailored ad copy variants for LinkedIn and Google.', status: 'queued' as const, priority: 'medium' as const, progress: 0, tags: [], agent_id: null, created_at: '', updated_at: '' },
   ];
 
-  const goalTitle    = goal.title || 'Build a marketing strategy for a SaaS product';
-  const completion   = goal.completion || 33;
-  const elapsedSecs  = goal.elapsed_seconds || 862;
+  const goalTitle    = goal?.title || 'Build a marketing strategy for a SaaS product';
+  const completion   = goal?.completion || 33;
+  const elapsedSecs  = goal?.elapsed_seconds || 862;
 
   // Use stream logs as reasoning lines if available, else show mock
   const reasoningLines = logs.length > 0

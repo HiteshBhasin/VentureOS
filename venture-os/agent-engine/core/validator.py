@@ -344,7 +344,9 @@ class Validator:
 
         # Check 7 — Each capability has a corresponding method
         for cap in capabilities or []:
-            method_name = re.sub(r"[\s\-]+", "_", cap.lower().strip())
+            # Strip optional signature (everything from '(' onward) before normalising
+            bare = cap.split("(")[0]
+            method_name = re.sub(r"[\s\-]+", "_", bare.lower().strip())
             if method_name not in method_names:
                 warnings.append(
                     f"Capability '{cap}' has no corresponding method '{method_name}'"

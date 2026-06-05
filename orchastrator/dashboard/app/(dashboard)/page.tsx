@@ -139,9 +139,10 @@ export default function DashboardPage() {
     { id: 'mr-001', name: 'MARKET_RESEARCHER', type: 'research' as const, status: 'active' as const, activity: 'SCRAPING', progress: 34, description: 'Extracting pricing models from 12 tier-1 competitors.', tokens_per_sec: 0, cost_estimate: 0, model: 'gpt-4o' },
   ];
 
-  const pid = goal.pid || 48821;
-  const memUsed = goal.memory_used_gb || status.memory_used_gb || 2.4;
-  const memTotal = goal.memory_total_gb || status.memory_total_gb || 32;
+
+  const pid = goal?.pid || 48821;
+  const memUsed = goal?.memory_used_gb || status.memory_used_gb || 2.4;
+  const memTotal = goal?.memory_total_gb || status.memory_total_gb || 32;
   const tokensPerSec = status.tokens_per_sec || 1248;
   const costEst = status.cost_estimate ?? 0.14;
   const uptime = formatUptime(status.uptime_seconds || 252);
@@ -166,7 +167,7 @@ export default function DashboardPage() {
             value={objective}
             onChange={(e) => setObjective(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={goal.title || 'Describe your goal...'}
+            placeholder={goal?.title || 'Describe your goal...'}
             className="flex-1 min-w-0 bg-transparent text-zinc-200 text-[11px] tracking-wider border-b border-cyan-500/30 focus:border-cyan-400 outline-none py-1 placeholder:text-zinc-600 placeholder:tracking-widest placeholder:uppercase transition-colors"
           />
         </div>

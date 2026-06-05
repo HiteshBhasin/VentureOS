@@ -9,6 +9,7 @@ import asyncio
 import os
 import re
 from agents.base_agent import BaseAgent
+from utils.logger import AgentLogger
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ class AgentFactory:
         self.tool_registry = tool_registry
         self._agent_registry: Dict[str, Type[BaseAgent]] = {}
         self._active_agents: Dict[str, BaseAgent] = {}
+        
 
     # ==================== Agent Type Registration ====================
 
@@ -91,6 +93,7 @@ class AgentFactory:
         if not agent_type:
             agent_type = self._determine_agent_type(task)
 
+        
         # Validate agent type is registered
         if agent_type not in self._agent_registry:
             available = self.get_registered_types()
@@ -112,14 +115,14 @@ class AgentFactory:
             tools=tools,
             config=config,
         )
-
+        agent_logger = AgentLogger(agent_id=agent_id)
         # Inject dependencies (memory, additional tools)
         self._inject_dependencies(agent)
 
         # Track the active agent
         self._active_agents[agent_id] = agent
-        logger.info(f"Spawned {agent_type} agent with ID: {agent_id}")
-
+        # logger.info(f"Spawned {agent_type} agent with ID: {agent_id}")
+        agent_logger.info(f"Spawned {agent_type} agent with ID: {agent_id}")
         return agent
 
     def spawn_multiple(
@@ -338,6 +341,10 @@ class AgentFactory:
                         logger.warning(
                             f"Attempt {attempt}/{max_retries}: generation not successful, retrying..."
                         )
+                        if attempt < max_retries:
+                            retry_delay = 15.0 * attempt  # 15s, 30s
+                            logger.warning(f"Waiting {retry_delay:.0f}s before retry {attempt + 1}...")
+                            time.sleep(retry_delay)
                         continue
 
                     validator = Validator()

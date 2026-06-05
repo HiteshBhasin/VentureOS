@@ -43,7 +43,7 @@ class LLM:
 
         elif model.startswith("mistral-"):
             try:
-                from mistralai.client import Mistral  # type: ignore[import-untyped]
+                from mistralai import Mistral  # type: ignore[import-untyped]
             except ImportError:
                 raise ImportError("Install mistralai: pip install mistralai")
             self.client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
@@ -120,7 +120,7 @@ class LLM:
             except Exception as exc:
                 last_exc = exc
                 msg = str(exc)
-                if "429" in msg or "rate limit" in msg.lower() or "rate_limited" in msg.lower():
+                if "500" in msg or "rate limit" in msg.lower() or "rate_limited" in msg.lower():
                     if attempt < _RATE_LIMIT_MAX_RETRIES - 1:
                         delay = _RATE_LIMIT_BASE_DELAY * (2 ** attempt)
                         logger.warning(
