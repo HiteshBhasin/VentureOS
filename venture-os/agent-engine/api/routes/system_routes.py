@@ -39,6 +39,7 @@ def get_system_status(request: Request) -> Dict[str, Any]:
         "active_agents": active_agents,
         "uptime_seconds": int(time.time() - _START_TIME),
         "status": "ok",
+       
     }
 
 
