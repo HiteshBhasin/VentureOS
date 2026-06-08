@@ -4,6 +4,7 @@ import { useTasks } from '@/hooks/useTasks';
 import { useActiveGoal } from '@/hooks/useActiveGoal';
 import { useSystemStream } from '@/hooks/useSystemStream';
 import { Task } from '@/types/task';
+import {TaskShowInfo} from '@/hooks/useTaskShowInfo'
 
 // ── helpers ──────────────────────────────────────────────
 
@@ -117,15 +118,15 @@ export default function TasksPage() {
   const { tasks } = useTasks();
   const { goal } = useActiveGoal();
   const { logs } = useSystemStream();
-
+  
   const displayTasks = tasks.length > 0 ? tasks : [
     { id: 'task-001', title: 'Competitor Analysis', description: 'Scraped top 5 competitors, identified feature gaps and pricing models.', status: 'completed' as const, priority: 'high' as const, progress: 100, tags: ['Node_AI', 'Flow Data'], agent_id: 'mr-001', created_at: '', updated_at: '' },
     { id: 'task-002', title: 'User Persona Creation', description: 'Synthesizing behavioral patterns from competitor analysis to define 3 target archetypes.', status: 'running' as const, priority: 'high' as const, progress: 7, tags: ['Initiating_Decomposit...'], agent_id: 'sl-001', created_at: '', updated_at: '' },
     { id: 'task-003', title: 'Ad Copy Generation', description: 'Waiting for persona completion to generate tailored ad copy variants for LinkedIn and Google.', status: 'queued' as const, priority: 'medium' as const, progress: 0, tags: [], agent_id: null, created_at: '', updated_at: '' },
   ];
 
-  const goalTitle    = goal?.title || 'Build a marketing strategy for a SaaS product';
-  const completion   = goal?.completion || 33;
+  const goalTitle    = goal?.title || '';
+  const completion   = goal?.completion || 33; 
   const elapsedSecs  = goal?.elapsed_seconds || 862;
 
   // Use stream logs as reasoning lines if available, else show mock
@@ -186,6 +187,7 @@ export default function TasksPage() {
             </div>
           </div>
           <div className="flex flex-col gap-3 overflow-y-auto flex-1">
+            
             {displayTasks.map((task) => (
               <TaskCard key={task.id} task={task} />
             ))}
