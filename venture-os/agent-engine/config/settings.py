@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings
 from pydantic import Field
 from functools import lru_cache
 from pathlib import Path
+from celery import Celery
 import os
 
 class Settings(BaseSettings):
@@ -211,3 +212,18 @@ def get_settings() -> Settings:
 
 # Convenience alias
 settings = get_settings()
+
+
+#===================Celery Task setting ==========================
+
+
+# 1. Initialize the Celery app
+app = Celery(
+    "my_api_project",
+    broker="redis://localhost:6379/0",  # Your broker URL
+    backend="redis://localhost:6379/0"  # Optional: For storing Celery results
+)
+
+# 2. Tell Celery to automatically look inside 'api/tasks/' 
+#    for files containing @shared_task
+app.autodiscover_tasks(['api'])

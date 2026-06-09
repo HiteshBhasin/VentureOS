@@ -37,4 +37,6 @@ cohere
 mistralai
 openai
 anthropic #using claude for this.
+#---------------Tasks------------------------
+Celery
 
