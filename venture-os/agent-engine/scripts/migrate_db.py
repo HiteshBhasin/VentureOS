@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS public.memory_items (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+
 CREATE INDEX IF NOT EXISTS idx_memory_user_id  ON public.memory_items(user_id);
 CREATE INDEX IF NOT EXISTS idx_memory_agent_id ON public.memory_items(agent_id);
 """
