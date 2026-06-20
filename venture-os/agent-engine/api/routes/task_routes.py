@@ -93,7 +93,7 @@ async def get_task(
 async def create_task(
     body: CreateTaskRequest,
     user_id: str = Depends(get_current_user),
-    orchastrator: Any = Depends(get_orchastrator),
+    # orchastrator: Any = Depends(get_orchastrator),
 ) -> Dict[str, Any]:
     """Create a new task for the authenticated user."""
     if body.priority not in VALID_PRIORITIES:
@@ -116,12 +116,8 @@ async def create_task(
     res = engine.table("tasks").insert(data).execute()
     if not res.data:
         raise HTTPException(status_code=500, detail="Failed to create task.")
-    asyncio.get_event_loop().run_in_executor(
-        None,
-        orchastrator.process_user_request,
-        f"{body.title}: {body.description}",
-    )
-    return {}
+
+    return res.data[0]
 
 
 @router.patch("/{task_id}")

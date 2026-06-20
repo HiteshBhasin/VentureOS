@@ -113,6 +113,19 @@ CREATE TABLE IF NOT EXISTS public.memory_items (
 
 CREATE INDEX IF NOT EXISTS idx_memory_user_id  ON public.memory_items(user_id);
 CREATE INDEX IF NOT EXISTS idx_memory_agent_id ON public.memory_items(agent_id);
+
+-- ─────────────────────────────────────────────────────────
+-- altering_task_table 
+-- ─────────────────────────────────────────────────────────
+ALTER TABLE public.tasks
+  ADD COLUMN IF NOT EXISTS attempts     INTEGER      NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS visible_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  ADD COLUMN IF NOT EXISTS claimed_at   TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS result       JSONB,
+  ADD COLUMN IF NOT EXISTS error        TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_tasks_queue
+  ON public.tasks (status, visible_at);
 """
 
 

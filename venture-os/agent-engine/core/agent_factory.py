@@ -1,3 +1,6 @@
+
+
+
 # Agent Factory: Spawn and manage agents
 from typing import Any, Dict, List, Optional, Type
 import importlib.util
@@ -295,7 +298,7 @@ class AgentFactory:
         # Mirrors the logic in CodingAgent._generate_agent_task so we can check
         # existence before deciding whether to generate.
         _agents_dir = os.path.normpath(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agents")
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "spawned_agents")
         )
         _file_name = re.sub(r"[^\w]+", "_", agent_name.lower()).strip("_") + "_agent.py"
         file_path: str = os.path.join(_agents_dir, _file_name)
