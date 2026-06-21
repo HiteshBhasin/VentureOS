@@ -111,24 +111,35 @@ class LLM:
 
         raise ValueError(f"Unknown provider: '{self.provider}'")
 
+    @staticmethod
+    def _is_rate_limit_error(exc: Exception) -> bool:
+        """Return True if the exception signals a 429 / rate-limit condition."""
+        msg = str(exc).lower()
+        return (
+            "429" in msg
+            or "rate limit" in msg
+            or "rate_limited" in msg
+            or "too many requests" in msg
+            or "resource_exhausted" in msg  # Gemini
+            or "quota" in msg
+        )
+
     def invoke(self, prompt: str, system_prmpt: str = "") -> str:
-        """Invoke the LLM with automatic retry on 429 rate-limit responses."""
+        """Invoke the LLM with automatic retry on rate-limit responses."""
         last_exc: Exception = RuntimeError("No attempts made")
         for attempt in range(_RATE_LIMIT_MAX_RETRIES):
             try:
                 return self._invoke_once(prompt, system_prmpt)
             except Exception as exc:
                 last_exc = exc
-                msg = str(exc)
-                if "500" in msg or "rate limit" in msg.lower() or "rate_limited" in msg.lower():
-                    if attempt < _RATE_LIMIT_MAX_RETRIES - 1:
-                        delay = _RATE_LIMIT_BASE_DELAY * (2 ** attempt)
-                        logger.warning(
-                            f"Rate limit hit on attempt {attempt + 1}/{_RATE_LIMIT_MAX_RETRIES}. "
-                            f"Retrying in {delay:.1f}s..."
-                        )
-                        time.sleep(delay)
-                        continue
-                # Non-429 errors or final attempt — re-raise immediately
+                if self._is_rate_limit_error(exc) and attempt < _RATE_LIMIT_MAX_RETRIES - 1:
+                    delay = _RATE_LIMIT_BASE_DELAY * (2 ** attempt)
+                    logger.warning(
+                        f"Rate limit on attempt {attempt + 1}/{_RATE_LIMIT_MAX_RETRIES}. "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                # Non-rate-limit error or final attempt — re-raise immediately
                 raise
         raise last_exc

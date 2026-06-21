@@ -142,8 +142,9 @@ class AgentFactory:
         """
         agents = []
         for task in tasks:
-            agent_type = task.get("type")
-            agent = self.spawn_agent(task, agent_type=agent_type, config=config)
+            # Use auto-detection — task["type"] is a task action (e.g. "generate_code"),
+            # not an agent type (e.g. "coding"). Let _determine_agent_type resolve it.
+            agent = self.spawn_agent(task, agent_type=None, config=config)
             agents.append(agent)
         return agents
 
@@ -307,9 +308,27 @@ class AgentFactory:
         )
 
         # Step 1 — Generate or reuse the agent source file
-        if os.path.exists(file_path):
-            logger.info(f"Reusing existing agent file for '{agent_name}': {file_path}")
-        else:
+        needs_generation = not os.path.exists(file_path)
+        if not needs_generation:
+            # Validate the cached file before trusting it — it may be from a failed
+            # prior generation or an incompatible version of BaseAgent.
+            validator = Validator()
+            cached_validation = validator.validate_generated_agent_code(
+                code=open(file_path).read(),
+                expected_class_name=class_name,
+                capabilities=capabilities or [],
+            )
+            if cached_validation.is_valid:
+                logger.info(f"Reusing validated agent file for '{agent_name}': {file_path}")
+            else:
+                logger.warning(
+                    f"Cached file for '{agent_name}' failed validation "
+                    f"({'; '.join(cached_validation.errors)}) — regenerating"
+                )
+                os.remove(file_path)
+                needs_generation = True
+
+        if needs_generation:
             logger.info(f"Generating new agent '{agent_name}' for use case: {use_case}")
             max_retries = 3
             last_errors: list = []

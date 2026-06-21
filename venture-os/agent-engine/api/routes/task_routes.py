@@ -1,6 +1,5 @@
 # Task endpoints — all queries filtered by authenticated user_id
 from typing import Any, Dict, List, Optional
-import asyncio
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 from pydantic import BaseModel
 
@@ -19,8 +18,6 @@ VALID_STATUSES = {
     "cancelled",
 }
 VALID_PRIORITIES = {"low", "medium", "high", "critical"}
-
-from api.routes.adaptor import get_orchastrator
 
 # ==================== Request Models ====================
 
@@ -93,9 +90,8 @@ async def get_task(
 async def create_task(
     body: CreateTaskRequest,
     user_id: str = Depends(get_current_user),
-    # orchastrator: Any = Depends(get_orchastrator),
 ) -> Dict[str, Any]:
-    """Create a new task for the authenticated user."""
+    """Create a new task. The background worker picks it up and runs the orchestrator."""
     if body.priority not in VALID_PRIORITIES:
         raise HTTPException(
             status_code=400,

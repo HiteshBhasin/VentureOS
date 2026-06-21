@@ -33,6 +33,9 @@ _AGENT_DEFAULT_TASK = {
     "runtime": "run_code",
 }
 
+# Hard cap on agents spawned per request — prevents runaway LLM-driven expansion
+_MAX_AGENTS_PER_REQUEST = 6
+
 
 class Orchestrator:
     """
@@ -82,7 +85,6 @@ class Orchestrator:
         self.setup_event_subscriptions()
 
         self.current_objectives: str = ""
-        self.active_agents: list = []
         logger.info("Orchestrator initialized successfully")
 
     def initialize_subsystems(self) -> None:
@@ -292,6 +294,13 @@ class Orchestrator:
             # ── Step 2: Orchestrator spawns every specialist agent ─────────────────────
             if not self.agent_factory:
                 raise RuntimeError("AgentFactory not initialized")
+
+            if len(roster) > _MAX_AGENTS_PER_REQUEST:
+                logger.warning(
+                    f"Roster has {len(roster)} agents — capping at {_MAX_AGENTS_PER_REQUEST}"
+                )
+                roster = roster[:_MAX_AGENTS_PER_REQUEST]
+
             spawned: Dict[str, Any] = {}
             for spec in roster:
                 agent_name = spec["agent_name"]
@@ -301,8 +310,6 @@ class Orchestrator:
                         agent_name=agent_name,
                         capabilities=spec.get("capabilities", []),
                     )
-                    self.active_agents.append(agent)
-
                     self.register_active_agent(agent)
                     spawned[agent_name] = {
                         "agent": agent,
