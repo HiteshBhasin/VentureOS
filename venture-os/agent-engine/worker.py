@@ -86,7 +86,7 @@ RETURNING id;
 
 _COMPLETE_SQL = """
 UPDATE public.tasks
-SET status = 'completed', result = %s, progress = 100, updated_at = NOW()
+SET status = 'completed', result = %s, error = NULL, progress = 100, updated_at = NOW()
 WHERE id = %s;
 """
 

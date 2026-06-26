@@ -1,3 +1,13 @@
 .env
 env
 venv
+
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+
+# Dynamically generated agent code (written at runtime by CodingAgent /
+# AgentFactory.spawn_dynamic_agent — regenerated per task, not source code)
+venture-os/agent-engine/spawned_agents/*
+!venture-os/agent-engine/spawned_agents/.gitkeep

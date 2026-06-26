@@ -1010,13 +1010,19 @@ class Orchestrator:
             for tr in agent_data.get("task_results", []):
                 task_type = tr.get("task", {}).get("type", "task")
                 res = tr.get("result") or {}
-                output = (
-                    res.get("output")
-                    or res.get("result")
-                    or res.get("report")
-                    or res.get("code")
-                    or str(res)
-                )
+                # Dynamically-generated agents aren't guaranteed to wrap their
+                # output in a dict — some capability methods return the raw
+                # string from _invoke_llm() directly.
+                if isinstance(res, dict):
+                    output = (
+                        res.get("output")
+                        or res.get("result")
+                        or res.get("report")
+                        or res.get("code")
+                        or str(res)
+                    )
+                else:
+                    output = res
                 task_outputs.append(f"  - [{task_type}]: {str(output)[:800]}")
             agent_summaries.append(
                 f"**{agent_name}** ({agent_data.get('agent_class', '')}):\n"

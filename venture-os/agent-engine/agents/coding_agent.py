@@ -158,6 +158,7 @@ class CodingAgent(BaseAgent):
         if not save_path:
             agents_dir = os.path.dirname(os.path.abspath(__file__))
             save_path = os.path.join(agents_dir, file_name)
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
         validator = Validator()
         validation = validator.validate_generated_agent_code(
             code=code, expected_class_name=class_name, capabilities=capabilities or []

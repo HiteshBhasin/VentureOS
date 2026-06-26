@@ -47,3 +47,6 @@ line-length = 88
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# tests/e2e_test.py's functions double as helpers called by run_all() and by
+# the token/agent_id fixtures, so they intentionally return values.
+filterwarnings = ["ignore::pytest.PytestReturnNotNoneWarning"]
