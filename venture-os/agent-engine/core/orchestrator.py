@@ -252,7 +252,7 @@ class Orchestrator:
 
     # ==================== REQUEST PROCESSING ====================
 
-   def process_user_request(self, user_input: str) -> Dict[str, Any]:
+    def process_user_request(self, user_input: str) -> Dict[str, Any]:
         """Backbone entry point — the Orchestrator owns every execution step:
         1. Meta_agent analyses goal and plans the specialist roster.
         2. Orchestrator spawns each specialist agent via AgentFactory.
@@ -361,6 +361,7 @@ class Orchestrator:
                     "status": agent.status,
                     "task_results": task_results,
                 }
+                self.unregister_agent(agent.agent_id)
 
             # ── Step 4: Orchestrator compiles the final comprehensive report ───────────
             report = self.compile_final_report(user_input, analysis, all_results)

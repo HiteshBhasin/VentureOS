@@ -204,6 +204,12 @@ def run() -> None:
                 orchestrator = Orchestrator(llm=llm)
                 user_input = f"{task['title']}: {task['description']}".strip(": ")
                 result = orchestrator.process_user_request(user_input)
+                # process_user_request() swallows its own exceptions and returns
+                # {"status": "error", ...} instead of raising — treat that the
+                # same as a raised exception, or every orchestrator-level failure
+                # would be recorded as "completed".
+                if result.get("status") == "error":
+                    raise RuntimeError(result.get("message", "Orchestrator returned an error"))
                 _mark_completed(conn, task["id"], result)
                 logger.info(f"Task {task['id']} completed successfully")
 

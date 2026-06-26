@@ -5,9 +5,9 @@ import { useAgents } from '@/hooks/useAgents';
 import { useSystemStatus } from '@/hooks/useSystemStatus';
 import { useSystemStream } from '@/hooks/useSystemStream';
 import { useActiveGoal } from '@/hooks/useActiveGoal';
-import { Agent } from '@/types/agent';
 import { StreamLog } from '@/types/task';
-import {createTask} from "@/lib/api";
+import { createTask } from "@/lib/api";
+import { AgentCard } from "@/components/dashboard/AgentCard";
 
 // ── helpers ──────────────────────────────────────────────
 
@@ -30,64 +30,6 @@ function parseLog(log: StreamLog) {
   const { tag, tagColor } = tagStyle(log.message);
   const text = log.message.replace(/^\[.*?\]\s*/, '');
   return { time: log.time, tag, tagColor, text };
-}
-
-function activityColor(activity: string) {
-  switch (activity?.toUpperCase()) {
-    case 'THINKING':  return 'text-cyan-400';
-    case 'SCRAPING':  return 'text-orange-400';
-    case 'ANALYZING': return 'text-blue-400';
-    case 'WRITING':   return 'text-violet-400';
-    default:          return 'text-zinc-400';
-  }
-}
-
-function barColor(activity: string) {
-  switch (activity?.toUpperCase()) {
-    case 'THINKING':  return 'from-cyan-600 to-cyan-400';
-    case 'SCRAPING':  return 'from-orange-600 to-orange-400';
-    case 'ANALYZING': return 'from-blue-600 to-blue-400';
-    case 'WRITING':   return 'from-violet-600 to-violet-400';
-    default:          return 'from-zinc-600 to-zinc-400';
-  }
-}
-
-// ── Agent card ────────────────────────────────────────────
-
-function AgentCard({ agent }: { agent: Agent }) {
-  return (
-    <div className="rounded border border-zinc-800 bg-zinc-900/50 p-3.5">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <div className="h-5 w-5 rounded-full bg-violet-500/20 border border-violet-500/40 flex items-center justify-center">
-            <svg className="h-2.5 w-2.5 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-            </svg>
-          </div>
-          <span className="text-[10px] font-bold tracking-widest text-zinc-200">{agent.name}</span>
-        </div>
-        <span className="text-[9px] font-bold tracking-widest text-emerald-400 border border-emerald-700/50 bg-emerald-900/20 rounded px-1.5 py-0.5 uppercase">
-          {agent.status}
-        </span>
-      </div>
-      <div className="text-[9px] text-zinc-600 tracking-wider mb-2">
-        ID: {agent.id.slice(0, 8).toUpperCase()}
-      </div>
-      <div className="flex items-center justify-between mb-1">
-        <span className={`text-[9px] tracking-widest font-bold ${activityColor(agent.activity)}`}>{agent.activity}</span>
-        <span className={`text-[9px] font-bold ${activityColor(agent.activity)}`}>{agent.progress}%</span>
-      </div>
-      <div className="h-1 rounded-full bg-zinc-800 overflow-hidden mb-2.5">
-        <div
-          className={`h-full rounded-full bg-gradient-to-r ${barColor(agent.activity)}`}
-          style={{ width: `${agent.progress}%` }}
-        />
-      </div>
-      <p className="text-[10px] text-zinc-500 italic leading-relaxed">
-        &ldquo;{agent.description}&rdquo;
-      </p>
-    </div>
-  );
 }
 
 // ── Page ──────────────────────────────────────────────────

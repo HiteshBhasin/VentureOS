@@ -1,10 +1,11 @@
 # Fast cache (Redis)
 import fnmatch
 import json
+import os
 import time
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 try:
     import redis as _redis_lib
@@ -44,7 +45,10 @@ class CacheStore:
         password: Optional[str] = None,
     ) -> bool:
         """Connect to Redis server."""
-        if _HAS_REDIS:
+        # No REDIS_URL/REDIS_HOST configured — skip the network attempt entirely
+        # and go straight to the in-memory fallback (avoids an OS-level connect
+        # timeout on every Orchestrator instantiation when Redis isn't deployed).
+        if _HAS_REDIS and (os.getenv("REDIS_URL") or os.getenv("REDIS_HOST")):
             try:
                 self._client = _redis_lib.Redis(
                     host=host,
@@ -52,7 +56,9 @@ class CacheStore:
                     db=db,
                     password=password,
                     decode_responses=False,
-                    socket_connect_timeout=5,
+                    socket_connect_timeout=1,
+                    retry_on_timeout=False,
+                    retry=_redis_lib.retry.Retry(_redis_lib.backoff.NoBackoff(), 0),
                 )
                 self._client.ping()
                 self._connected = True
@@ -108,7 +114,7 @@ class CacheStore:
             return data
 
     def _is_expired(self, entry: CacheEntry) -> bool:
-        return entry.expires_at is not None and datetime.utcnow() > entry.expires_at
+        return entry.expires_at is not None and datetime.now(timezone.utc) > entry.expires_at
 
     def get(self, key: str) -> Optional[Any]:
         """Get value by key."""
@@ -140,9 +146,9 @@ class CacheStore:
                 return True
             except Exception:
                 pass
-        expires_at = datetime.utcnow() + timedelta(seconds=ttl) if ttl else None
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl) if ttl else None
         self._local_cache[key] = CacheEntry(
-            key=key, value=value, created_at=datetime.utcnow(), expires_at=expires_at
+            key=key, value=value, created_at=datetime.now(timezone.utc), expires_at=expires_at
         )
         return True
 
@@ -183,7 +189,7 @@ class CacheStore:
                 pass
         entry = self._local_cache.get(key)
         if entry:
-            entry.expires_at = datetime.utcnow() + timedelta(seconds=seconds)
+            entry.expires_at = datetime.now(timezone.utc) + timedelta(seconds=seconds)
             return True
         return False
 
@@ -197,7 +203,7 @@ class CacheStore:
         entry = self._local_cache.get(key)
         if entry is None or entry.expires_at is None:
             return -1
-        remaining = (entry.expires_at - datetime.utcnow()).total_seconds()
+        remaining = (entry.expires_at - datetime.now(timezone.utc)).total_seconds()
         return max(0, int(remaining))
 
     def persist(self, key: str) -> bool:

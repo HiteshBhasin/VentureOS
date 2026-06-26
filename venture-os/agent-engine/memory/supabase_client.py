@@ -1,8 +1,11 @@
 from typing import Any, Dict
 from supabase import create_client, Client
 from dotenv import load_dotenv
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Load from root .env (VentureOS/.env)
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[3] / ".env")
@@ -19,7 +22,7 @@ try:
     engine: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     # Ping the database with a lightweight query to confirm the connection is live
 
-    print("Supabase connection OK")
+    logger.info("Supabase connection OK")
 except Exception as e:
     raise ConnectionError(f"Supabase connection failed: {e}")
 
@@ -41,7 +44,7 @@ def create_table_raw(sql: str) -> None:
     try:
         with conn.cursor() as cur:
             cur.execute(sql)
-        print("Table created successfully.")
+        logger.info("Table created successfully.")
     finally:
         conn.close()
 
@@ -50,22 +53,19 @@ def insert(table: str, data: dict) -> None:
     """Insert a record into a Supabase table."""
     try:
         response = engine.table(table).insert(data).execute()
-        print(f"Insert response: {response}")
-        # print("Record inserted successfully.")
-        # else:
-        #     print(f"Failed to insert record: {response.json()}")
+        logger.info(f"Insert response: {response}")
     except Exception as e:
-        print(f"Error inserting record: {e}")
+        logger.error(f"Error inserting record: {e}")
 
 
 def retreieve(table: str, query: dict, columns: str) -> list:
     """Retrieve records from a Supabase table based on a query."""
     try:
         response = engine.table(table).select(columns).match(query).execute()
-        print(f"Retrieve response: {response}")
+        logger.info(f"Retrieve response: {response}")
         return response.data
     except Exception as e:
-        print(f"Error retrieving records: {e}")
+        logger.error(f"Error retrieving records: {e}")
         return []
 
 

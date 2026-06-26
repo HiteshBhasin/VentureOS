@@ -158,8 +158,12 @@ class TestProcessUserRequest:
         assert orchestrator._correlation_id is not None
 
     def test_exception_in_plan_returns_error(self, orchestrator):
-        with patch.object(
-            orchestrator, "create_execution_plan", side_effect=RuntimeError("boom")
+        # analyze_user_requirement is the first real step process_user_request
+        # calls — patch it directly rather than create_execution_plan, which
+        # isn't (yet) invoked by the main pipeline (see issues.txt #5c).
+        with patch(
+            "core.meta_agent.Meta_agent.analyze_user_requirement",
+            side_effect=RuntimeError("boom"),
         ):
             result = orchestrator.process_user_request("Build something")
         assert result["status"] == "error"

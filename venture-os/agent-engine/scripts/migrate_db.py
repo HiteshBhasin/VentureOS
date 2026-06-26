@@ -137,14 +137,14 @@ def run_migration() -> None:
         with conn.cursor() as cur:
             print("Running migration...")
             cur.execute(MIGRATION)
-        print("\n✓  Migration complete. Tables created (or already existed):")
+        print("\nMigration complete. Tables created (or already existed):")
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
             )
             tables = [row[0] for row in cur.fetchall()]
             for t in tables:
-                print(f"   • {t}")
+                print(f"   - {t}")
     finally:
         conn.close()
 

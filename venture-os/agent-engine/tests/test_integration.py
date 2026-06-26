@@ -458,50 +458,9 @@ class TestMetaAgent:
         assert isinstance(ordered, list)
         assert len(ordered) == len(tasks)
 
-    def test_supervise_spawns_agents_for_pending(self, mock_llm_json):
-        meta = Meta_agent(mock_llm_json)
-        response = meta.analyze_user_requirement("Build something")
-        tasks = meta.decompose_goals(response)
-        with patch.object(
-            meta, "spawn_base_agent", return_value=MagicMock()
-        ) as mock_spawn:
-            meta.supervise(tasks)
-            assert mock_spawn.call_count == len(tasks)
-
-    def test_supervise_no_typo_in_status_check(self, mock_llm):
-        meta = Meta_agent(mock_llm)
-        tasks = [
-            {
-                "task_name": "t1",
-                "status": "pending",
-                "assigned_agent": None,
-                "dependencies": [],
-            }
-        ]
-        with patch.object(meta, "spawn_base_agent", return_value=MagicMock()):
-            meta.supervise(tasks)
-        # "pending" must be matched — if the old "peneding" typo were present, status would never change
-        assert tasks[0]["status"] == "in progress"
-
-    def test_refine_strategy_resets_failed_tasks(self, mock_llm):
-        meta = Meta_agent(mock_llm)
-        meta._tasks = [
-            {
-                "task_name": "t1",
-                "status": "failed",
-                "assigned_agent": "a1",
-                "dependencies": [],
-            },
-            {
-                "task_name": "t2",
-                "status": "pending",
-                "assigned_agent": None,
-                "dependencies": [],
-            },
-        ]
-        meta.refine_strategy()
-        assert meta._tasks[0]["status"] == "pending"
-        assert meta._tasks[0]["assigned_agent"] is None
+    # Agent spawning/supervision and strategy refinement moved to Orchestrator —
+    # Meta_agent is analysis-only now (see Orchestrator.process_user_request and
+    # tests/orchastrator_test.py for the current coverage of that behavior).
 
 
 # ══════════════════════════════════════════════════════════════════════════════

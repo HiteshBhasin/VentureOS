@@ -45,10 +45,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
     const data = await res.json();
     setToken(data.access_token);
-    if (data.user) {
-      writeUser(data.user);
-      setUserState(data.user);
-    }
+    const loggedInUser: User = { id: data.user_id, email: data.email, name: '', role: 'user', createdAt: new Date().toISOString() };
+    writeUser(loggedInUser);
+    setUserState(loggedInUser);
     setTokenState(data.access_token);
   }, []);
 

@@ -19,14 +19,11 @@ class StoreMemoryRequest(BaseModel):
     value: Any
     memory_type: str = "long_term"  # short_term | long_term | episodic | semantic | working
     agent_id: Optional[str] = None
-    expires_at: Optional[str] = None
-    metadata: Dict[str, Any] = {}
 
 
 class UpdateMemoryRequest(BaseModel):
     value: Optional[Any] = None
-    metadata: Optional[Dict[str, Any]] = None
-    expires_at: Optional[str] = None
+    memory_type: Optional[str] = None
 
 
 # ==================== Memory CRUD ====================
@@ -41,9 +38,9 @@ async def list_memories(
     user_id: str = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """List memory entries for the authenticated user."""
-    query = engine.table("memory_entries").select("*").eq("user_id", user_id)
+    query = engine.table("memory_items").select("*").eq("user_id", user_id)
     if memory_type:
-        query = query.eq("type", memory_type)
+        query = query.eq("memory_type", memory_type)
     if agent_id:
         query = query.eq("agent_id", agent_id)
     res = query.order("created_at", desc=True).range(skip, skip + limit - 1).execute()
@@ -57,7 +54,7 @@ async def get_memory(
 ) ->  Any:
     """Get a single memory entry by ID."""
     res = (
-        engine.table("memory_entries")
+        engine.table("memory_items")
         .select("*")
         .eq("id", memory_id)
         .eq("user_id", user_id)
@@ -79,12 +76,10 @@ async def store_memory(
         "user_id": user_id,
         "key": body.key,
         "value": body.value,
-        "type": body.memory_type,
+        "memory_type": body.memory_type,
         "agent_id": body.agent_id,
-        "expires_at": body.expires_at,
-        "metadata": body.metadata,
     }
-    res = engine.table("memory_entries").insert(data).execute()
+    res = engine.table("memory_items").insert(data).execute()
     if not res.data:
         raise HTTPException(status_code=500, detail="Failed to store memory entry.")
     return res.data[0]
@@ -101,7 +96,7 @@ async def update_memory(
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update.")
     res = (
-        engine.table("memory_entries")
+        engine.table("memory_items")
         .update(updates)
         .eq("id", memory_id)
         .eq("user_id", user_id)
@@ -119,7 +114,7 @@ async def delete_memory(
 ) -> Any:
     """Delete a memory entry."""
     res = (
-        engine.table("memory_entries")
+        engine.table("memory_items")
         .delete()
         .eq("id", memory_id)
         .eq("user_id", user_id)

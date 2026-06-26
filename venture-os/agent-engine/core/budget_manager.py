@@ -47,6 +47,8 @@ class BudgetManager:
         self._usage_history: List[Dict[str, Any]] = []
         self._model_pricing: Dict[str, Dict[str, float]] = {}
         self._reservations: Dict[str, Dict[str, Any]] = {}
+        self.token_usage: List[Dict[str, Any]] = []
+        self.time_records: List[Dict[str, Any]] = []
 
     # ==================== Budget Configuration ====================
 
@@ -98,8 +100,6 @@ class BudgetManager:
         """Record token usage."""
         tokens = prompt_tokens + completion_tokens
 
-        if not hasattr(self, "token_usage"):
-            self.token_usage = []
         self.token_usage.append(
             {
                 "prompt_tokens": prompt_tokens,
@@ -141,10 +141,6 @@ class BudgetManager:
         self, duration_seconds: float, task_id: Optional[str] = None
     ) -> None:
         """Record time usage."""
-        if not hasattr(self, "time_records"):
-            self.time_records = []
-
-            # Store the time usage
         self.time_records.append(
             {
                 "duration_seconds": duration_seconds,
@@ -197,20 +193,22 @@ class BudgetManager:
 
     def has_budget_for_request(self) -> bool:
         """Check if request budget allows another request."""
-        limits = self._limits
-        for key, value in limits.items():
-            if key == BudgetType.REQUESTS:
-                if value.current_usage <= value.limit:
-                    return True
-        return False
+        if BudgetType.REQUESTS not in self._limits:
+            return True
+        limit = self._limits[BudgetType.REQUESTS]
+        return limit.current_usage < limit.limit
 
     def has_budget_for_time(self, estimated_seconds: float) -> bool:
         """Check if time budget allows estimated duration."""
-        used_time = self._limits[BudgetType.TIME].current_usage
-        return used_time + estimated_seconds <= self._limits[BudgetType.TIME].limit
+        if BudgetType.TIME not in self._limits:
+            return True
+        limit = self._limits[BudgetType.TIME]
+        return limit.current_usage + estimated_seconds <= limit.limit
 
     def estimate_remaining(self, budget_type: BudgetType) -> float:
         """Estimate remaining budget."""
+        if budget_type not in self._limits:
+            return float("inf")
         budget = self._limits[budget_type]
         remaining = budget.limit - budget.current_usage
         return remaining

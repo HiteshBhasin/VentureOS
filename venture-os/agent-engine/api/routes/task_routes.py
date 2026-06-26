@@ -56,6 +56,10 @@ async def list_tasks(
     user_id: str = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """List all tasks belonging to the authenticated user."""
+    if status and status not in VALID_STATUSES:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid status. Must be one of: {VALID_STATUSES}"
+        )
     query = engine.table("tasks").select("*").eq("user_id", user_id)
     if status:
         query = query.eq("status", status)

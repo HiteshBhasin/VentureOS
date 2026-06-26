@@ -22,6 +22,7 @@ import uuid
 from pathlib import Path
 
 import httpx
+import pytest
 from dotenv import load_dotenv
 
 # ── Path setup ───────────────────────────────────────────────────────────────
@@ -37,6 +38,28 @@ TEST_PASSWORD = os.getenv("TEST_USER_PASSWORD", "")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+
+
+def _backend_reachable() -> bool:
+    try:
+        httpx.get(f"{BASE_URL}/health", timeout=2)
+        return True
+    except (httpx.ConnectError, httpx.TimeoutException):
+        return False
+
+
+# pytest fixtures — only used when this file runs under `pytest`. The standalone
+# `run_all()` / `python tests/e2e_test.py` path below doesn't use these at all.
+@pytest.fixture(scope="module")
+def token() -> str:
+    if not _backend_reachable():
+        pytest.skip(f"Backend not reachable at {BASE_URL} — start it to run this e2e test.")
+    return test_auth()
+
+
+@pytest.fixture(scope="module")
+def agent_id(token: str) -> str:
+    return test_agents(token)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -68,11 +91,14 @@ def test_health():
     _section("1. Health Check  →  GET /health")
     try:
         r = httpx.get(f"{BASE_URL}/health", timeout=10)
-    except httpx.ConnectError:
-        _fail(
+    except (httpx.ConnectError, httpx.TimeoutException):
+        msg = (
             f"Cannot connect to backend at {BASE_URL}.\n"
             "  Start it with:  uvicorn api.main:app --reload  (from agent-engine/)"
         )
+        if "PYTEST_CURRENT_TEST" in os.environ:
+            pytest.skip(msg)
+        _fail(msg)
 
     assert r.status_code == 200, f"Expected 200, got {r.status_code}"
     body = r.json()
@@ -89,6 +115,9 @@ def test_auth() -> str:
     """Returns a valid JWT access token."""
     _section("2. Authentication  →  POST /api/v1/auth/login")
 
+    if "PYTEST_CURRENT_TEST" in os.environ and not _backend_reachable():
+        pytest.skip(f"Backend not reachable at {BASE_URL} — start it to run this e2e test.")
+
     if not TEST_EMAIL or not TEST_PASSWORD:
         _warn(
             "TEST_USER_EMAIL / TEST_USER_PASSWORD not set in .env — "
@@ -96,8 +125,13 @@ def test_auth() -> str:
         )
         return _auth_via_supabase_client()
 
-    payload = {"email": TEST_EMAIL, "password": TEST_PASSWORD}
-    r = httpx.post(f"{BASE_URL}/api/v1/auth/login", json=payload, timeout=15)
+    try:
+        payload = {"email": TEST_EMAIL, "password": TEST_PASSWORD}
+        r = httpx.post(f"{BASE_URL}/api/v1/auth/login", json=payload, timeout=15)
+    except (httpx.ConnectError, httpx.TimeoutException) as exc:
+        if "PYTEST_CURRENT_TEST" in os.environ:
+            pytest.skip(f"Backend became unreachable mid-test: {exc}")
+        raise
 
     if r.status_code == 401:
         _warn("Login failed (401) — trying Supabase client fallback.")
@@ -147,7 +181,12 @@ def test_agents(token: str) -> str:
 
     # 3a — List
     _section("3a. List Agents  →  GET /api/v1/agents/")
-    r = httpx.get(f"{BASE_URL}/api/v1/agents/", headers=headers, timeout=15)
+    try:
+        r = httpx.get(f"{BASE_URL}/api/v1/agents/", headers=headers, timeout=15)
+    except (httpx.ConnectError, httpx.TimeoutException) as exc:
+        if "PYTEST_CURRENT_TEST" in os.environ:
+            pytest.skip(f"Backend not reachable at {BASE_URL}: {exc}")
+        raise
     assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
     body = r.json()
     agent_count = len(body.get("agents", []))
@@ -190,7 +229,12 @@ def test_tasks(token: str, agent_id: str) -> None:
 
     # 4a — List
     _section("4a. List Tasks  →  GET /api/v1/tasks/")
-    r = httpx.get(f"{BASE_URL}/api/v1/tasks/", headers=headers, timeout=15)
+    try:
+        r = httpx.get(f"{BASE_URL}/api/v1/tasks/", headers=headers, timeout=15)
+    except (httpx.ConnectError, httpx.TimeoutException) as exc:
+        if "PYTEST_CURRENT_TEST" in os.environ:
+            pytest.skip(f"Backend not reachable at {BASE_URL}: {exc}")
+        raise
     assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
     task_count = len(r.json().get("tasks", []))
     _ok(f"Found {task_count} existing task(s)")
@@ -232,13 +276,19 @@ def test_tasks(token: str, agent_id: str) -> None:
 def test_orchestrator_direct() -> None:
     _section("5. Orchestrator Direct Smoke Test  (process_user_request)")
 
+    if "PYTEST_CURRENT_TEST" in os.environ and not os.getenv("RUN_LIVE_LLM_TESTS"):
+        pytest.skip(
+            "Makes a real, billed LLM call — set RUN_LIVE_LLM_TESTS=1 to run it, "
+            "or invoke `python tests/e2e_test.py` directly."
+        )
+
     try:
         from core.llm_class import LLM
         from core.orchestrator import Orchestrator
     except ImportError as exc:
         _fail(f"Cannot import core modules: {exc}")
 
-    model = os.getenv("gpt-04-model", "command-a-03-2025")
+    model = os.getenv("DEFAULT_LLM_MODEL", "command-a-03-2025")
     _ok(f"Using LLM model: {model}")
 
     llm = LLM(model=model, temperature=0.3)

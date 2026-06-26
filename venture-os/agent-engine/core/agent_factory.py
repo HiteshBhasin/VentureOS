@@ -353,6 +353,7 @@ class AgentFactory:
                             "use_case": prompt,
                             "agent_name": agent_name,
                             "capabilities": capabilities or [],
+                            "save_path": file_path,
                         }
                     )
 

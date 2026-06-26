@@ -10,12 +10,17 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     # ==================== API Keys ====================
+    # Note: ANTHROPIC_API_KEY is accepted here but core/llm_class.py has no
+    # Claude/Anthropic provider branch yet — setting it has no effect today.
     OPENAI_API_KEY: Optional[str] = Field(default=None, description="OpenAI API key")
     ANTHROPIC_API_KEY: Optional[str] = Field(
-        default=None, description="Anthropic API key"
+        default=None, description="Anthropic API key (not yet used by llm_class.py)"
     )
     COHERE_API_KEY: Optional[str] = Field(default=None, description="Cohere API key")
-    GOOGLE_API_KEY: Optional[str] = Field(default=None, description="Google AI API key")
+    MISTRAL_API_KEY: Optional[str] = Field(default=None, description="Mistral API key")
+    GOOGLE_GEMINI_API_KEY: Optional[str] = Field(
+        default=None, description="Google Gemini API key — matches the env var core/llm_class.py reads"
+    )
 
     # ==================== Server Configuration ====================
     APP_NAME: str = "VentureOS Agent Engine"

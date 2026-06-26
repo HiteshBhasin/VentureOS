@@ -1,5 +1,6 @@
 import { Agent, CreateAgentRequest } from '@/types/agent';
 import { Task, ActiveGoal, SystemStatus, CreateTaskRequest } from '@/types/task';
+import { MemoryEntry } from '@/types/memory';
 import { getToken, logout as clearLocalAuth } from '@/lib/auth';
 
 const BASE = '/api';
@@ -98,6 +99,12 @@ export async function getActiveGoal(): Promise<ActiveGoal> {
 
 export async function getSystemStatus(): Promise<SystemStatus> {
   return apiFetch<SystemStatus>('/system/status');
+}
+
+// ── Memory ───────────────────────────────────────────────
+export async function getMemoryEntries(): Promise<MemoryEntry[]> {
+  const data = await apiFetch<{ memories: MemoryEntry[] }>('/memory');
+  return data.memories;
 }
 
 // ── Auth ─────────────────────────────────────────────────

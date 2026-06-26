@@ -56,7 +56,7 @@ class CodeExecutor:
             (r"\bexec\s*\(", "Use of exec()"),
             (r"\bos\.system\s*\(", "Shell command via os.system()"),
             (r"\bsubprocess\b", "Use of subprocess module"),
-            (r"\bopen\s*\(", "File system access via open()"),
+            (r"\bopen\s*\([^)]*['\"](?:w|a|wb|ab|w\+|a\+)['\"]", "File system write access via open()"),
             (r"\bsocket\b", "Network access via socket"),
             (r"\burllib\b", "Network access via urllib"),
             (r"\brequests\b", "Network access via requests"),

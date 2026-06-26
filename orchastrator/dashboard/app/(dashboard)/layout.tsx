@@ -1,5 +1,6 @@
 import { Header } from "@/components/layout/Header";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { Footer } from "@/components/layout/Footer";
 import { AuthGuard } from "@/components/common/AuthGuard";
 
 interface DashboardLayoutProps {
@@ -14,6 +15,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         <div className="flex flex-col flex-1 overflow-hidden">
           <Header />
           <main className="flex-1 overflow-y-auto">{children}</main>
+          <Footer />
         </div>
       </div>
     </AuthGuard>
