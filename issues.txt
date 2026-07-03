@@ -120,3 +120,27 @@ The `spawn_dynamic_agent` idea is legitimately clever: a CodingAgent writes a ne
 | 🟠 Architecture | Drive execution through TaskGraph dependency order | ❌ Pending |
 | 🟢 Memory | Persist and retrieve context across runs | ✅ Done |
 | 🟢 Feature | Stream partial results instead of blocking until full report | ✅ Done |
+
+Flaws — most important first
+1. The "safe" code sandbox is trivially escapable, and it's wired directly into the coding agent's execute path.
+In coding_agent.py:34-37, generate_code has the LLM write code from a free-text spec and immediately auto-executes it via a fresh CodeExecutor().execute(...) — no enable_sandbox() call, so Docker mode never activates.
+
+For Python: code_executor.py:143-219 restricts __builtins__ but still includes getattr, setattr, type, object, vars — classic ingredients for a sandbox escape (().__class__.__bases__[0].__subclasses__()...) since attribute access isn't gated by builtins at all. This is a well-known-broken pattern, not a real sandbox.
+For Bash/JS: execute_bash and execute_javascript just shell out via subprocess.run with zero containment unless Docker mode is explicitly enabled — which it isn't by default, and the Docker-detection path is skipped entirely on Windows (os.name == "posix" check).
+The regex "dangerous pattern" blocklist (detect_dangerous_patterns/sanitize_code) is never called from execute()/execute_python()/execute_bash() — it exists but isn't actually a gate, and regex blocklists are bypassable anyway.
+Net effect: any user hitting the "generate code" task with language: bash gets something close to arbitrary command execution on the host. This is the one to fix before this touches real code/data.
+
+2. ToolExecutor.execute() never calls its own permission/rate-limit checks. tool_executor.py:63-140 validates tool availability and inputs, but check_permissions() and check_rate_limit() (lines 316-346) are fully implemented and never invoked anywhere in the execution path. Same "safety code exists but isn't plugged in" pattern as #1.
+
+3. Path traversal + Zip Slip in file_handler.py.
+
+_resolve() only prepends base_path for relative paths — an absolute path or ../../ traversal bypasses the sandbox root entirely.
+decompress() calls zf.extractall() / tf.extractall() with no member-path sanitization — a malicious archive (e.g. an agent downloading/extracting something) can write files anywhere on disk (classic Zip Slip).
+The extension allowlist (_check_allowed) is only enforced on read/write/create/append — not on delete, copy, move, decompress.
+4. Auth works but is inefficient/inconsistent. auth.py does a live network round-trip to Supabase on every request to verify the JWT, instead of local verification. SUPABASE_JWT_SECRET is defined in .env but appears unused — looks like local verification was intended but never implemented.
+
+Good news: .env is properly gitignored and not in git history, CORS isn't wildcarded with credentials, and the JWT auth middleware itself is reasonably sound.
+
+Bottom line
+Building an IDE on top is a sound direction, but before wiring the coding agent up to anything real: fix the code-execution path first (make Docker/gVisor sandboxing mandatory, not opt-in, and delete the illusion of a Python "safe builtins" sandbox), fix the file-handler traversal/zip-slip issues, and wire the existing-but-unused permission/rate-limit checks into ToolExecutor.execute(). Want me to go deeper on any of these (e.g. propose a concrete sandboxing fix, or scope out what the editor UI layer would need)?
+

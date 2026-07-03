@@ -92,6 +92,26 @@ class ToolExecutor:
                 completed_at=datetime.utcnow(),
             )
 
+        # Fail closed: no context/agent_id means no identity to authorize against.
+        permission_context = context or ExecutionContext(execution_id="unknown", agent_id="")
+        if not self.check_permissions(tool_name, permission_context):
+            return ExecutionResult(
+                tool_name=tool_name,
+                status=ExecutionStatus.FAILED,
+                error=f"Permission denied for tool '{tool_name}'",
+                started_at=started,
+                completed_at=datetime.utcnow(),
+            )
+
+        if not self.check_rate_limit(tool_name):
+            return ExecutionResult(
+                tool_name=tool_name,
+                status=ExecutionStatus.FAILED,
+                error=f"Rate limit exceeded for tool '{tool_name}'",
+                started_at=started,
+                completed_at=datetime.utcnow(),
+            )
+
         handler = self.registry.get_handler(tool_name)
         timeout = (context.timeout if context else None) or self._default_timeout
         container: Dict[str, Any] = {"result": None, "error": None}

@@ -53,11 +53,25 @@ class FileHandler:
     # ==================== Private Helpers ====================
 
     def _resolve(self, path: str) -> Path:
-        """Resolve path relative to base_path if set."""
+        """Resolve path relative to base_path if set.
+
+        When a base_path is configured it is treated as a sandbox root: both
+        absolute paths and `..` traversal are rejected if the resolved path
+        would land outside of it, so callers can't escape the intended
+        directory by passing an absolute path or `../../`.
+        """
         p = Path(path)
-        if not p.is_absolute() and self._base_path is not None:
-            p = self._base_path / p
-        return p
+        if self._base_path is None:
+            return p
+
+        candidate = p if p.is_absolute() else self._base_path / p
+        resolved = candidate.resolve()
+        base_resolved = self._base_path.resolve()
+        if resolved != base_resolved and base_resolved not in resolved.parents:
+            raise PermissionError(
+                f"Path '{path}' resolves outside of the allowed base path '{base_resolved}'"
+            )
+        return resolved
 
     def _check_allowed(self, path: Path) -> None:
         """Raise if extension is not in allowlist."""
@@ -217,6 +231,7 @@ class FileHandler:
     def delete(self, path: str) -> bool:
         """Delete file."""
         p = self._resolve(path)
+        self._check_allowed(p)
         if p.exists() and p.is_file():
             p.unlink()
             return True
@@ -226,6 +241,7 @@ class FileHandler:
         """Copy file."""
         src = self._resolve(source)
         dst = self._resolve(destination)
+        self._check_allowed(dst)
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(src), str(dst))
         return True
@@ -234,6 +250,7 @@ class FileHandler:
         """Move file."""
         src = self._resolve(source)
         dst = self._resolve(destination)
+        self._check_allowed(dst)
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(dst))
         return True
@@ -241,7 +258,9 @@ class FileHandler:
     def rename(self, path: str, new_name: str) -> bool:
         """Rename file."""
         p = self._resolve(path)
-        p.rename(p.parent / new_name)
+        new_path = p.parent / new_name
+        self._check_allowed(new_path)
+        p.rename(new_path)
         return True
 
     def exists(self, path: str) -> bool:
@@ -470,17 +489,32 @@ class FileHandler:
             raise ValueError(f"Unsupported format: {format}")
         return True
 
+    def _assert_member_within(self, out_dir: Path, member_name: str) -> None:
+        """Guard against Zip Slip: reject archive members that would extract
+        outside of the destination directory (e.g. `../../etc/cron.d/evil`)."""
+        target = (out_dir / member_name).resolve()
+        if target != out_dir and out_dir not in target.parents:
+            raise ValueError(
+                f"Archive member '{member_name}' would extract outside of '{out_dir}' (zip slip)"
+            )
+
     def decompress(self, path: str, output_dir: str) -> bool:
         """Decompress archive."""
         p = self._resolve(path)
         out = self._resolve(output_dir)
         out.mkdir(parents=True, exist_ok=True)
+        out_resolved = out.resolve()
+
         if zipfile.is_zipfile(str(p)):
             with zipfile.ZipFile(str(p), "r") as zf:
-                zf.extractall(str(out))
+                for member in zf.namelist():
+                    self._assert_member_within(out_resolved, member)
+                zf.extractall(str(out_resolved))
         elif tarfile.is_tarfile(str(p)):
             with tarfile.open(str(p), "r:*") as tf:
-                tf.extractall(str(out))
+                for member in tf.getmembers():
+                    self._assert_member_within(out_resolved, member.name)
+                tf.extractall(str(out_resolved))
         else:
             raise ValueError(f"Unknown archive format: {p}")
         return True

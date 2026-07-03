@@ -64,6 +64,19 @@ class CodeExecutor:
             (r"\bshutil\b", "File system operations via shutil"),
             (r"globals\s*\(\s*\)", "Access to globals()"),
             (r"locals\s*\(\s*\)", "Access to locals()"),
+            # Object-graph traversal gadgets used to escape restricted-builtins
+            # sandboxes (e.g. `().__class__.__bases__[0].__subclasses__()`).
+            (r"__class__", "Access to __class__ (sandbox escape vector)"),
+            (r"__bases__", "Access to __bases__ (sandbox escape vector)"),
+            (r"__base__", "Access to __base__ (sandbox escape vector)"),
+            (r"__subclasses__", "Access to __subclasses__ (sandbox escape vector)"),
+            (r"__mro__", "Access to __mro__ (sandbox escape vector)"),
+            (r"__globals__", "Access to __globals__ (sandbox escape vector)"),
+            (r"__builtins__", "Access to __builtins__ (sandbox escape vector)"),
+            (r"__getattribute__", "Access to __getattribute__ (sandbox escape vector)"),
+            (r"__code__", "Access to __code__ (sandbox escape vector)"),
+            (r"__closure__", "Access to __closure__ (sandbox escape vector)"),
+            (r"__reduce__|__reduce_ex__", "Access to pickle reduce hooks (sandbox escape vector)"),
         ],
         "javascript": [
             (r"require\s*\(\s*['\"]child_process['\"]", "Use of child_process module"),
@@ -131,6 +144,10 @@ class CodeExecutor:
         if self.config.get("sandbox") == "docker":
             return self._execute_in_docker(code, Language.PYTHON, timeout, inputs)
 
+        blocked = self._block_if_dangerous(code, Language.PYTHON)
+        if blocked is not None:
+            return blocked
+
         import io
         import time
         import traceback
@@ -139,7 +156,13 @@ class CodeExecutor:
 
         inputs = inputs or {}
 
-        # Allowlist of safe builtins — excludes __import__, open, eval, exec, compile, etc.
+        # Allowlist of safe builtins — excludes __import__, open, eval, exec, compile,
+        # and (critically) getattr/setattr/vars, which are the standard gadgets used
+        # to reach dunder attributes (__class__, __globals__, ...) by computed name
+        # and walk the object graph out of a restricted-builtins sandbox. Regular
+        # dotted attribute access (e.g. `x.__class__`) is still caught textually by
+        # _DANGEROUS_PATTERNS above, but that is a best-effort net, not a real
+        # boundary — see the fail-closed check in execute_python().
         _safe_builtin_names = [
             "abs",
             "all",
@@ -158,7 +181,6 @@ class CodeExecutor:
             "float",
             "format",
             "frozenset",
-            "getattr",
             "hasattr",
             "hash",
             "hex",
@@ -173,7 +195,6 @@ class CodeExecutor:
             "max",
             "min",
             "next",
-            "object",
             "oct",
             "ord",
             "pow",
@@ -184,16 +205,12 @@ class CodeExecutor:
             "reversed",
             "round",
             "set",
-            "setattr",
             "slice",
             "sorted",
             "staticmethod",
             "str",
             "sum",
-            "super",
             "tuple",
-            "type",
-            "vars",
             "zip",
             "True",
             "False",
@@ -280,6 +297,10 @@ class CodeExecutor:
         if self.config.get("sandbox") == "docker":
             return self._execute_in_docker(code, Language.JAVASCRIPT, timeout, inputs)
 
+        blocked = self._block_if_dangerous(code, Language.JAVASCRIPT)
+        if blocked is not None:
+            return blocked
+
         import json
         import subprocess
         import tempfile
@@ -361,6 +382,10 @@ class CodeExecutor:
         """Execute Bash script via subprocess."""
         if self.config.get("sandbox") == "docker":
             return self._execute_in_docker(script, Language.BASH, timeout)
+
+        blocked = self._block_if_dangerous(script, Language.BASH)
+        if blocked is not None:
+            return blocked
 
         import subprocess
         import tempfile
@@ -491,6 +516,29 @@ class CodeExecutor:
         with open(filepath, "r") as f:
             code = f.read()
         return self.execute(code, language, inputs={"args": args or []})
+
+    def _block_if_dangerous(
+        self, code: str, language: Language
+    ) -> Optional["CodeExecutionResult"]:
+        """Fail closed when code matches a known-dangerous pattern and we are not
+        running inside the Docker sandbox. This is best-effort (a text blocklist
+        can always be obfuscated around) — it exists to stop the obvious escape
+        gadgets and dangerous calls, not to replace real sandboxing."""
+        findings = self.detect_dangerous_patterns(code, language)
+        if not findings:
+            return None
+        details = "; ".join(
+            f"line {f['line']}: {f['description']}" for f in findings
+        )
+        return CodeExecutionResult(
+            success=False,
+            output="",
+            error=(
+                "Execution blocked outside of the Docker sandbox — potentially "
+                f"dangerous code detected ({details}). Call enable_sandbox() with "
+                "Docker available to run this code."
+            ),
+        )
 
     def _get_preexec_fn(self):
         """Return a preexec_fn that applies POSIX resource limits, or None on Windows."""
