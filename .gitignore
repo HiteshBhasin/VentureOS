@@ -11,3 +11,7 @@ __pycache__/
 # AgentFactory.spawn_dynamic_agent — regenerated per task, not source code)
 venture-os/agent-engine/spawned_agents/*
 !venture-os/agent-engine/spawned_agents/.gitkeep
+
+# Per-task project output written by Orchestrator._write_project_output
+venture-os/agent-engine/generated_projects/*
+!venture-os/agent-engine/generated_projects/.gitkeep

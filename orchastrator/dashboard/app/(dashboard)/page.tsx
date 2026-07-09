@@ -5,9 +5,23 @@ import { useAgents } from '@/hooks/useAgents';
 import { useSystemStatus } from '@/hooks/useSystemStatus';
 import { useSystemStream } from '@/hooks/useSystemStream';
 import { useActiveGoal } from '@/hooks/useActiveGoal';
-import { StreamLog } from '@/types/task';
+import { useTasks } from '@/hooks/useTasks';
+import { StreamLog, Task } from '@/types/task';
 import { createTask } from "@/lib/api";
 import { AgentCard } from "@/components/dashboard/AgentCard";
+
+function graphNodeStyle(status: Task['status']) {
+  switch (status) {
+    case 'running':
+      return { box: 'border-cyan-500/50 bg-cyan-500/10', dot: 'bg-cyan-400 animate-pulse', title: 'text-cyan-300', label: 'text-cyan-600', text: 'Generating' };
+    case 'completed':
+      return { box: 'border-emerald-500/40 bg-emerald-500/10', dot: 'bg-emerald-400', title: 'text-emerald-300', label: 'text-emerald-600', text: 'Done' };
+    case 'failed':
+      return { box: 'border-red-500/40 bg-red-500/10', dot: 'bg-red-400', title: 'text-red-300', label: 'text-red-600', text: 'Failed' };
+    default:
+      return { box: 'border-zinc-700 bg-zinc-800/50 opacity-60', dot: 'bg-zinc-600', title: 'text-zinc-400', label: 'text-zinc-600', text: 'Idle' };
+  }
+}
 
 // ── helpers ──────────────────────────────────────────────
 
@@ -39,6 +53,7 @@ export default function DashboardPage() {
   const { status } = useSystemStatus();
   const { logs } = useSystemStream();
   const { goal } = useActiveGoal();
+  const { tasks } = useTasks();
 
   const [objective, setObjective] = useState('');
   const [submitted, setSubmitted] = useState<string | null>(null);
@@ -226,13 +241,8 @@ export default function DashboardPage() {
             </button>
           </div>
         </div>
-        <div className="relative h-44 p-4 overflow-hidden">
-          <svg className="absolute inset-0 w-full h-full pointer-events-none">
-            <line x1="130" y1="72" x2="255" y2="52" stroke="#334155" strokeWidth="1.5" strokeDasharray="5,4" />
-            <line x1="130" y1="80" x2="255" y2="108" stroke="#334155" strokeWidth="1.5" strokeDasharray="5,4" />
-          </svg>
-
-          <div className="absolute flex flex-col items-center gap-1.5 left-10 top-[50px]">
+        <div className="flex items-center gap-6 h-44 p-4 overflow-x-auto">
+          <div className="flex flex-col items-center gap-1.5 shrink-0">
             <div className="h-12 w-12 rounded-lg bg-cyan-500/15 border border-cyan-500/40 flex items-center justify-center">
               <svg className="h-5 w-5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -241,21 +251,24 @@ export default function DashboardPage() {
             <span className="text-[9px] text-cyan-400 font-bold tracking-widest">CORE_STRAT</span>
           </div>
 
-          <div className="absolute rounded border border-cyan-500/50 bg-cyan-500/10 px-3 py-2 min-w-[140px] left-[260px] top-7">
-            <div className="flex items-center gap-1.5 mb-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
-              <span className="text-[10px] font-bold text-cyan-300 tracking-wide">Meta Strategy Gen</span>
+          {tasks.length === 0 ? (
+            <span className="text-[10px] text-zinc-600 tracking-widest uppercase">No tasks yet — submit an objective above</span>
+          ) : (
+            <div className="flex flex-col gap-2.5 overflow-y-auto min-h-0 max-h-36 py-1">
+              {tasks.slice(0, 4).map((task) => {
+                const style = graphNodeStyle(task.status);
+                return (
+                  <div key={task.id} className={`rounded border px-3 py-2 min-w-[160px] max-w-[220px] ${style.box}`}>
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${style.dot}`} />
+                      <span className={`text-[10px] font-bold tracking-wide truncate ${style.title}`}>{task.title}</span>
+                    </div>
+                    <span className={`text-[9px] tracking-widest uppercase ${style.label}`}>Status: {style.text}</span>
+                  </div>
+                );
+              })}
             </div>
-            <span className="text-[9px] text-cyan-600 tracking-widest uppercase">Status: Generating</span>
-          </div>
-
-          <div className="absolute rounded border border-zinc-700 bg-zinc-800/50 px-3 py-2 min-w-[130px] opacity-50 left-[260px] top-24">
-            <div className="flex items-center gap-1.5 mb-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-zinc-600" />
-              <span className="text-[10px] font-bold text-zinc-400 tracking-wide">Market Research</span>
-            </div>
-            <span className="text-[9px] text-zinc-600 tracking-widest uppercase">Idle</span>
-          </div>
+          )}
         </div>
       </div>
 

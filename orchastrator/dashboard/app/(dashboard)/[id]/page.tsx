@@ -79,6 +79,13 @@ export default function DetailPage() {
           ))}
         </div>
       )}
+
+      {task.result?.project_path && (
+        <div className="rounded border border-zinc-800 bg-zinc-900/50 p-4 max-w-md">
+          <div className="text-[9px] text-zinc-600 tracking-widest uppercase mb-1.5">Project Output</div>
+          <code className="text-[10px] text-cyan-400 break-all">{task.result.project_path}</code>
+        </div>
+      )}
     </div>
   );
 }

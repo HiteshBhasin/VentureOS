@@ -10,6 +10,8 @@ export interface Task {
   created_at: string;
   updated_at: string;
   completed_at?: string;
+  result?: { project_path?: string | null; report?: string; [key: string]: unknown } | null;
+  error?: string | null;
 }
 
 export interface ActiveGoal {

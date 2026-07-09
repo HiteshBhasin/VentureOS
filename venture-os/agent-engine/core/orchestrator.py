@@ -2,6 +2,7 @@
 from typing import Any, AsyncGenerator, Dict, List, Optional
 import json
 import os
+import re
 import uuid
 import logging
 import asyncio
@@ -371,6 +372,7 @@ class Orchestrator:
 
             # ── Step 4: Orchestrator compiles the final comprehensive report ───────────
             report = self.compile_final_report(user_input, analysis, all_results)
+            project_path = self._write_project_output(report, all_results)
             # after compiling report
             if self.memory_manager:
                 self.memory_manager.store(
@@ -394,6 +396,7 @@ class Orchestrator:
                 ],
                 "agent_results": all_results,
                 "report": report,
+                "project_path": project_path,
             }
 
         except Exception as exc:
@@ -1062,6 +1065,128 @@ class Orchestrator:
                 f"compile_final_report LLM call failed ({exc}); using fallback."
             )
             return self._fallback_report(goal, agent_summaries)
+
+    _LANG_EXTENSIONS = {
+        "python": "py", "py": "py",
+        "javascript": "js", "js": "js",
+        "typescript": "ts", "ts": "ts",
+        "bash": "sh", "sh": "sh", "shell": "sh",
+        "sql": "sql",
+        "json": "json",
+        "yaml": "yaml", "yml": "yaml",
+        "html": "html",
+        "css": "css",
+    }
+
+    _CODE_FENCE_RE = re.compile(r"```([a-zA-Z0-9_+-]*)\n(.*?)```", re.DOTALL)
+
+    @staticmethod
+    def _collect_strings(obj: Any) -> List[str]:
+        """Recursively collect every string value from an arbitrarily-shaped
+        result payload. Dynamically-generated agents return their output
+        under whatever key name the LLM happened to pick (``implementation``,
+        ``code``, ``output``, ``result``, ...) — scanning by a fixed key
+        allowlist misses most of them, so this scans every string in the
+        structure instead.
+        """
+        out: List[str] = []
+        if isinstance(obj, str):
+            out.append(obj)
+        elif isinstance(obj, dict):
+            for v in obj.values():
+                out.extend(Orchestrator._collect_strings(v))
+        elif isinstance(obj, (list, tuple)):
+            for v in obj:
+                out.extend(Orchestrator._collect_strings(v))
+        return out
+
+    def _extract_code_files(self, agent_results: Dict[str, Any]) -> Dict[str, str]:
+        """Best-effort extraction of real source code from agent outputs.
+
+        Two sources: (1) the raw ``source`` field CodingAgent now preserves
+        alongside its sandboxed execution result, and (2) fenced code blocks
+        (```lang ... ```) found anywhere in any agent's result payload.
+        Agents that only produced prose with no fenced code yield nothing
+        here — this can't invent code that was never generated.
+        """
+        files: Dict[str, str] = {}
+        seen_snippets: set = set()
+
+        def _safe_stem(*parts: str) -> str:
+            raw = "_".join(p for p in parts if p)
+            return re.sub(r"[^\w.-]+", "_", raw).strip("_") or "output"
+
+        for agent_name, agent_data in agent_results.items():
+            if not isinstance(agent_data, dict):
+                continue
+            for i, tr in enumerate(agent_data.get("task_results", [])):
+                task_type = (tr.get("task") or {}).get("type", "task")
+                result = tr.get("result")
+                if result is None:
+                    continue
+
+                if isinstance(result, dict):
+                    source = result.get("source")
+                    if isinstance(source, str) and source.strip():
+                        ext = self._LANG_EXTENSIONS.get(
+                            str(result.get("language", "python")).lower(), "txt"
+                        )
+                        stem = _safe_stem(agent_name, task_type, str(i))
+                        files[f"{stem}.{ext}"] = source
+                        seen_snippets.add(source.strip())
+
+                for text in self._collect_strings(result):
+                    for j, m in enumerate(self._CODE_FENCE_RE.finditer(text)):
+                        lang, code = m.group(1).lower(), m.group(2)
+                        if not code.strip() or code.strip() in seen_snippets:
+                            continue
+                        seen_snippets.add(code.strip())
+                        ext = self._LANG_EXTENSIONS.get(lang, "txt")
+                        stem = _safe_stem(agent_name, task_type, f"{i}_{j}")
+                        files[f"{stem}.{ext}"] = code
+
+        return files
+
+    def _write_project_output(
+        self, report: str, agent_results: Dict[str, Any]
+    ) -> Optional[str]:
+        """Materialize this run's output as a project folder on disk, so
+        completing a task leaves behind more than a DB row — a real
+        directory the user can open, under agent-engine/generated_projects/.
+
+        Any actual source code the agents produced is written under src/ as
+        real files. When the roster never generated real code (common for
+        analysis-style agents that only return prose), src/ is simply empty
+        — this materializes what was produced, it doesn't fabricate code.
+        """
+        try:
+            from tools.file_handler import FileHandler
+
+            root = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "..", "generated_projects"
+            )
+            project_dir = os.path.join(root, self._correlation_id or "run")
+            fh = FileHandler()
+            fh.create_directory(project_dir)
+            fh.write(os.path.join(project_dir, "report.md"), report)
+            fh.write_json(os.path.join(project_dir, "results.json"), agent_results)
+
+            code_files = self._extract_code_files(agent_results)
+            for filename, content in code_files.items():
+                fh.write(os.path.join(project_dir, "src", filename), content)
+            if code_files:
+                logger.info(f"Extracted {len(code_files)} source file(s) into src/")
+            else:
+                logger.info(
+                    "No extractable source code in agent output — src/ not created"
+                )
+
+            abs_path = os.path.abspath(project_dir)
+            logger.info(f"Project output written to {abs_path}")
+            return abs_path
+        except Exception as exc:
+            logger.warning(f"Failed to write project output to disk: {exc}")
+            return None
 
     def _fallback_report(self, goal: str, agent_summaries: List[str]) -> str:
         """Plain-text report used when the LLM is unavailable (e.g. rate-limited)."""

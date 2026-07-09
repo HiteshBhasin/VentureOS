@@ -34,7 +34,13 @@ class CodingAgent(BaseAgent):
             execution = CodeExecutor().execute(
                 code=result, language=task.get("language", "python")
             )
-            return {"status": "success", "type": "generate_code", "code": execution}
+            return {
+                "status": "success",
+                "type": "generate_code",
+                "code": execution,
+                "source": result,
+                "language": task.get("language", "python"),
+            }
         elif task_type == "generate_function":
             result = self.generate_function(
                 name=task.get("name", "generated_function"),
@@ -47,6 +53,8 @@ class CodingAgent(BaseAgent):
                 "code": CodeExecutor().execute(
                     code=result, language=task.get("language", "python")
                 ),
+                "source": result,
+                "language": task.get("language", "python"),
             }
         elif task_type == "generate_tests":
             result = self.generate_tests(
@@ -59,6 +67,8 @@ class CodingAgent(BaseAgent):
                 "code": CodeExecutor().execute(
                     code=result, language=task.get("language", "python")
                 ),
+                "source": result,
+                "language": task.get("language", "python"),
             }
         elif task_type == "generate_documentation":
             result = self.generate_documentation(
@@ -71,6 +81,8 @@ class CodingAgent(BaseAgent):
                 "code": CodeExecutor().execute(
                     code=result, language=task.get("language", "python")
                 ),
+                "source": result,
+                "language": task.get("language", "python"),
             }
         elif task_type == "debug_code":
             return self.debug_error(
@@ -88,6 +100,8 @@ class CodingAgent(BaseAgent):
                 "code": CodeExecutor().execute(
                     code=result, language=task.get("language", "python")
                 ),
+                "source": result,
+                "language": task.get("language", "python"),
             }
         elif task_type == "generate_agent":
             return self._generate_agent_task(

@@ -38,6 +38,8 @@ LEASE_MINUTES = 10              # how long a worker holds a task before it can b
 MAX_ATTEMPTS = 3                # tasks are dead-lettered after this many failures
 RETRY_BACKOFF_SECONDS = 30      # first retry delay; doubles each attempt (30s, 60s, 120s)
 SPAWNED_AGENT_CLEANUP_INTERVAL_SECONDS = 3600  # how often to sweep spawned_agents/ for stale files
+TASK_TIMEOUT_HOURS = float(os.getenv("TASK_TIMEOUT_HOURS", "24"))  # dead-letter SLA
+DEADLETTER_SWEEP_INTERVAL_SECONDS = 300  # how often to check for tasks past the SLA
 
 # ── SQL statements ────────────────────────────────────────────────────────────
 
@@ -68,7 +70,7 @@ WHERE id = (
     LIMIT 1
     FOR UPDATE SKIP LOCKED
 )
-RETURNING id, title, description, user_id, priority, attempts;
+RETURNING id, title, description, user_id, priority, attempts, agent_id;
 """
 
 # Return stale 'running' tasks whose lease expired back to 'pending'
@@ -97,6 +99,46 @@ SET status = %s, error = %s, visible_at = %s, updated_at = NOW()
 WHERE id = %s;
 """
 
+# Dead-letter any task that has sat in pending/running past the SLA, regardless
+# of attempts remaining — a 24h-old task is stale even if it still has retries.
+_DEADLETTER_SQL = """
+UPDATE public.tasks
+SET status = 'failed', error = %s, updated_at = NOW()
+WHERE status IN ('pending', 'running')
+  AND created_at < NOW() - (%s || ' hours')::INTERVAL
+RETURNING id;
+"""
+
+# Reflect real task execution onto the DB agents table so the dashboard's
+# Agents page shows something other than permanently-idle placeholder rows.
+_AGENT_SET_ACTIVE_SQL = """
+UPDATE public.agents
+SET status = 'active', activity = %s, updated_at = NOW()
+WHERE id = %s;
+"""
+
+_AGENT_SET_IDLE_SQL = """
+UPDATE public.agents
+SET status = 'idle', activity = 'IDLE', progress = 0, updated_at = NOW()
+WHERE id = %s;
+"""
+
+# For tasks created without an explicit agent_id (e.g. the dashboard's
+# objective bar), atomically claim one idle agent belonging to the same user
+# so the Agents page reflects real work instead of sitting permanently idle.
+_ASSIGN_IDLE_AGENT_SQL = """
+UPDATE public.agents
+SET status = 'active', activity = %s, updated_at = NOW()
+WHERE id = (
+    SELECT id FROM public.agents
+    WHERE user_id = %s AND status = 'idle'
+    ORDER BY created_at ASC
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING id;
+"""
+
 
 # ── Database helpers ──────────────────────────────────────────────────────────
 
@@ -122,6 +164,7 @@ def _claim_task(conn) -> dict | None:
         "user_id":     str(row[3]),
         "priority":    row[4],
         "attempts":    row[5],
+        "agent_id":    str(row[6]) if row[6] else None,
     }
 
 
@@ -132,6 +175,54 @@ def _reclaim_dead(conn) -> int:
         reclaimed = cur.fetchall()
         conn.commit()
     return len(reclaimed)
+
+
+def _deadletter_stale(conn, timeout_hours: float) -> int:
+    """Fail any task that has been pending/running longer than the SLA.
+    Returns count dead-lettered."""
+    error = f"Timed out — exceeded {timeout_hours:g}h SLA without completing"
+    with conn.cursor() as cur:
+        cur.execute(_DEADLETTER_SQL, (error, str(timeout_hours)))
+        deadlettered = cur.fetchall()
+        conn.commit()
+    return len(deadlettered)
+
+
+def _set_agent_active(conn, agent_id: str, activity: str) -> None:
+    """Best-effort — a bad/missing agent_id shouldn't abort task execution."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(_AGENT_SET_ACTIVE_SQL, (activity, agent_id))
+            conn.commit()
+    except Exception as exc:
+        logger.warning(f"Could not mark agent {agent_id} active: {exc}")
+        conn.rollback()
+
+
+def _set_agent_idle(conn, agent_id: str) -> None:
+    try:
+        with conn.cursor() as cur:
+            cur.execute(_AGENT_SET_IDLE_SQL, (agent_id,))
+            conn.commit()
+    except Exception as exc:
+        logger.warning(f"Could not mark agent {agent_id} idle: {exc}")
+        conn.rollback()
+
+
+def _assign_idle_agent(conn, user_id: str, activity: str) -> str | None:
+    """Claim one idle agent for this user. Returns its id, or None if the
+    user has no agent rows (or none are idle) — task execution proceeds
+    either way, this is purely for dashboard visibility."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(_ASSIGN_IDLE_AGENT_SQL, (activity, user_id))
+            row = cur.fetchone()
+            conn.commit()
+        return str(row[0]) if row else None
+    except Exception as exc:
+        logger.warning(f"Could not auto-assign an idle agent for user {user_id}: {exc}")
+        conn.rollback()
+        return None
 
 
 def _mark_completed(conn, task_id: str, result: dict) -> None:
@@ -187,12 +278,22 @@ def run() -> None:
     if removed:
         logger.info(f"Startup cleanup: removed {removed} stale spawned-agent file(s)")
     last_cleanup_at = time.time()
+    last_deadletter_at = time.time()
 
     while True:
         try:
             if time.time() - last_cleanup_at > SPAWNED_AGENT_CLEANUP_INTERVAL_SECONDS:
                 cleanup_stale_spawned_agents()
                 last_cleanup_at = time.time()
+
+            if time.time() - last_deadletter_at > DEADLETTER_SWEEP_INTERVAL_SECONDS:
+                deadlettered = _deadletter_stale(conn, TASK_TIMEOUT_HOURS)
+                if deadlettered:
+                    logger.warning(
+                        f"Dead-lettered {deadlettered} task(s) past the "
+                        f"{TASK_TIMEOUT_HOURS:g}h SLA"
+                    )
+                last_deadletter_at = time.time()
 
             # ── Recover any tasks whose lease expired (dead workers) ──
             reclaimed = _reclaim_dead(conn)
@@ -209,6 +310,20 @@ def run() -> None:
                 f"Claimed task {task['id']} "
                 f"(priority={task['priority']}, attempt={task['attempts']}/{MAX_ATTEMPTS})"
             )
+
+            agent_id = task["agent_id"]
+            if agent_id:
+                _set_agent_active(conn, agent_id, "RUNNING")
+            else:
+                agent_id = _assign_idle_agent(conn, task["user_id"], "RUNNING")
+                if agent_id:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "UPDATE public.tasks SET agent_id = %s WHERE id = %s",
+                            (agent_id, task["id"]),
+                        )
+                        conn.commit()
+                    logger.info(f"Auto-assigned agent {agent_id} to task {task['id']}")
 
             # ── Run the orchestrator ──
             try:
@@ -227,6 +342,10 @@ def run() -> None:
             except Exception as exc:
                 logger.error(f"Task {task['id']} failed: {exc}", exc_info=True)
                 _mark_failed(conn, task["id"], str(exc), task["attempts"])
+
+            finally:
+                if agent_id:
+                    _set_agent_idle(conn, agent_id)
 
         except psycopg2.OperationalError as exc:
             # Lost DB connection — reconnect and keep going
