@@ -1,0 +1,39 @@
+services:
+  api:
+    build:
+      context: ./venture-os/agent-engine
+    image: ventureos-agent-engine:latest
+    env_file:
+      - ./venture-os/agent-engine/.env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  # Separate long-running process — claims tasks from Postgres via
+  # FOR UPDATE SKIP LOCKED and runs the orchestrator. Same image as api,
+  # different command. See venture-os/agent-engine/worker.py.
+  worker:
+    image: ventureos-agent-engine:latest
+    build:
+      context: ./venture-os/agent-engine
+    command: ["python", "worker.py"]
+    env_file:
+      - ./venture-os/agent-engine/.env
+    # The image's HEALTHCHECK probes the API's HTTP server — worker.py has no
+    # HTTP server, so that check would always fail and misreport "unhealthy".
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ./orchastrator/dashboard
+    image: ventureos-dashboard:latest
+    environment:
+      - BACKEND_URL=http://api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped

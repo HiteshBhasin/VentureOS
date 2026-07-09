@@ -17,10 +17,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = ROOT.parents[1]
+ROOT = Path(__file__).resolve().parents[1]  # agent-engine/ (where .env lives)
 sys.path.insert(0, str(ROOT))
-load_dotenv(dotenv_path=REPO_ROOT / ".env")
+load_dotenv(dotenv_path=ROOT / ".env")
 
 import psycopg2
 

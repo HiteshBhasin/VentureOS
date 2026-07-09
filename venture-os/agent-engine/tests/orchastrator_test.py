@@ -170,6 +170,72 @@ class TestProcessUserRequest:
         assert "boom" in result["message"]
 
 
+class TestAgentSpawnCap:
+    """Roster size is capped before spawning — prevents runaway LLM-driven
+    expansion. Default comes from MAX_AGENTS_PER_REQUEST env var (6); callers
+    can override per-instance via config={"max_agents_per_request": N}."""
+
+    def _stub_roster(self, n):
+        return [
+            {"agent_name": f"agent_{i}", "use_case": "x", "capabilities": [], "tasks": []}
+            for i in range(n)
+        ]
+
+    def test_default_cap_limits_spawn_count(self, mock_llm):
+        orchestrator = Orchestrator(mock_llm)
+        fake_agent_factory = MagicMock()
+        fake_agent_factory.spawn_dynamic_agent.return_value = MagicMock()
+        orchestrator.agent_factory = fake_agent_factory
+
+        with patch(
+            "core.meta_agent.Meta_agent.analyze_user_requirement",
+            return_value={"primary_goal": "test"},
+        ), patch(
+            "core.meta_agent.Meta_agent._plan_agent_roster",
+            return_value=self._stub_roster(10),
+        ):
+            result = orchestrator.process_user_request("Build something big")
+
+        assert result["status"] == "success"
+        assert fake_agent_factory.spawn_dynamic_agent.call_count == 6
+
+    def test_config_override_changes_cap(self, mock_llm):
+        orchestrator = Orchestrator(mock_llm, config={"max_agents_per_request": 2})
+        fake_agent_factory = MagicMock()
+        fake_agent_factory.spawn_dynamic_agent.return_value = MagicMock()
+        orchestrator.agent_factory = fake_agent_factory
+
+        with patch(
+            "core.meta_agent.Meta_agent.analyze_user_requirement",
+            return_value={"primary_goal": "test"},
+        ), patch(
+            "core.meta_agent.Meta_agent._plan_agent_roster",
+            return_value=self._stub_roster(10),
+        ):
+            result = orchestrator.process_user_request("Build something big")
+
+        assert result["status"] == "success"
+        assert fake_agent_factory.spawn_dynamic_agent.call_count == 2
+
+    def test_roster_under_cap_is_unaffected(self, mock_llm):
+        orchestrator = Orchestrator(mock_llm)
+        fake_agent_factory = MagicMock()
+        fake_agent_factory.spawn_dynamic_agent.return_value = MagicMock()
+        orchestrator.agent_factory = fake_agent_factory
+
+        with patch(
+            "core.meta_agent.Meta_agent.analyze_user_requirement",
+            return_value={"primary_goal": "test"},
+        ), patch(
+            "core.meta_agent.Meta_agent._plan_agent_roster",
+            return_value=self._stub_roster(3),
+        ):
+            result = orchestrator.process_user_request("Small task")
+
+        assert result["status"] == "success"
+        assert fake_agent_factory.spawn_dynamic_agent.call_count == 3
+
+
 # ── 4. Tool management ────────────────────────────────────────────────────────
 
 

@@ -1,6 +1,7 @@
 # Task scheduling & coordination
 from typing import Any, AsyncGenerator, Dict, List, Optional
 import json
+import os
 import uuid
 import logging
 import asyncio
@@ -33,8 +34,10 @@ _AGENT_DEFAULT_TASK = {
     "runtime": "run_code",
 }
 
-# Hard cap on agents spawned per request — prevents runaway LLM-driven expansion
-_MAX_AGENTS_PER_REQUEST = 6
+# Hard cap on agents spawned per request — prevents runaway LLM-driven expansion.
+# Override globally via the MAX_AGENTS_PER_REQUEST env var, or per-instance via
+# Orchestrator(config={"max_agents_per_request": N}).
+_DEFAULT_MAX_AGENTS_PER_REQUEST = int(os.getenv("MAX_AGENTS_PER_REQUEST", "6"))
 
 
 class Orchestrator:
@@ -295,11 +298,14 @@ class Orchestrator:
             if not self.agent_factory:
                 raise RuntimeError("AgentFactory not initialized")
 
-            if len(roster) > _MAX_AGENTS_PER_REQUEST:
+            max_agents = self.config.get(
+                "max_agents_per_request", _DEFAULT_MAX_AGENTS_PER_REQUEST
+            )
+            if len(roster) > max_agents:
                 logger.warning(
-                    f"Roster has {len(roster)} agents — capping at {_MAX_AGENTS_PER_REQUEST}"
+                    f"Roster has {len(roster)} agents — capping at {max_agents}"
                 )
-                roster = roster[:_MAX_AGENTS_PER_REQUEST]
+                roster = roster[:max_agents]
 
             spawned: Dict[str, Any] = {}
             for spec in roster:

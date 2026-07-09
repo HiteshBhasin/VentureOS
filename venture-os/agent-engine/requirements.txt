@@ -1,0 +1,35 @@
+# Hard requirements — the API and worker import these at module load time.
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-dotenv
+httpx
+psycopg2-binary
+supabase
+
+# LLM providers — selected at runtime by model name prefix (core/llm_class.py).
+# mistralai is the provider currently verified working end-to-end; openai/cohere
+# are supported but depend on the relevant API account having usable quota.
+openai
+cohere
+# Pinned: core/llm_class.py does `from mistralai import Mistral`, which only
+# exists in the 1.x API shape — mistralai 2.x renamed/restructured this and
+# breaks the import (confirmed by an unpinned Docker build pulling 2.5.0).
+mistralai==1.12.4
+
+# Optional subsystems that degrade gracefully if absent (kept anyway — small,
+# and used by the real cache/vector-memory code paths when configured).
+redis
+numpy
+
+# NOT included: anthropic, PyJWT, pypdf, fastapi-mail, pyotp, qrcode,
+# two-fast-auth, mcp, langchain, langgraph, google-adk, celery, pyngrok,
+# slowapi, pandas, scikit-learn, sqlalchemy, pymongo, beautifulsoup4, lxml,
+# sentence-transformers, transformers, docker, black — all listed in
+# pyproject.toml/the root requirements.txt but never actually imported
+# anywhere in agent-engine, or only behind lazy imports for optional
+# tool/embedding features (scraper XPath, financial_api pandas helpers,
+# alternate embedding backends, sandboxed code execution). Install the
+# specific one you need if you turn on that feature — the code raises a
+# clear ImportError naming the package either way.

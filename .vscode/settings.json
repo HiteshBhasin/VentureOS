@@ -1,20 +1,21 @@
 {
   // GitHub Copilot Settings
   "github.copilot.enable": {
-    "*": false,
+    "*": true,
     "plaintext": true,
     "markdown": true,
     "scminput": false,
     "javascript": true,
-    "python": false,
     "sql": true,
     "java": false,
     "json": true,
     "html": false,
-    "typescript": true,
-    "typescriptreact": false,
     "shellscript": true,
-    "yaml": true
+    "typescriptreact": false,
+    "typescript": true,
+    "python": false,
+    "yaml": true,
+    "dockerfile": true
   },
 
   // Enable inline suggestions (CRITICAL for Copilot)

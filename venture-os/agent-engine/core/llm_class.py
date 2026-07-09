@@ -9,6 +9,12 @@ logger = logging.getLogger(__name__)
 _RATE_LIMIT_BASE_DELAY = 5.0   # seconds
 _RATE_LIMIT_MAX_RETRIES = 4
 
+# Network timeout for every provider's HTTP client. Without this, a stalled
+# connection (observed inside Docker's NAT'd network) hangs the call forever —
+# there's no task-level watchdog elsewhere, so a single hung request wedges
+# the whole worker process indefinitely.
+_REQUEST_TIMEOUT_SECONDS = 60.0
+
 # Cohere models removed after Sep 2025 → current replacements
 _COHERE_ALIASES: dict[str, str] = {
     "command-r-plus": "command-a-03-2025",
@@ -30,15 +36,21 @@ class LLM:
         if model.startswith("gpt-") or model.startswith("o1") or model.startswith("o3"):
             from openai import OpenAI
 
-            self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            self.client = OpenAI(
+                api_key=os.getenv("OPENAI_API_KEY"), timeout=_REQUEST_TIMEOUT_SECONDS
+            )
             self.provider = "openai"
 
         elif model.startswith("gemini-"):
             try:
                 from google import genai  # type: ignore[import-untyped]
+                from google.genai.types import HttpOptions
             except ImportError:
                 raise ImportError("Install google-genai: pip install google-genai")
-            self.client = genai.Client(api_key=os.getenv("GOOGLE_GEMINI_API_KEY"))
+            self.client = genai.Client(
+                api_key=os.getenv("GOOGLE_GEMINI_API_KEY"),
+                http_options=HttpOptions(timeout=int(_REQUEST_TIMEOUT_SECONDS * 1000)),
+            )
             self.provider = "gemini"
 
         elif model.startswith("mistral-"):
@@ -46,7 +58,10 @@ class LLM:
                 from mistralai import Mistral  # type: ignore[import-untyped]
             except ImportError:
                 raise ImportError("Install mistralai: pip install mistralai")
-            self.client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
+            self.client = Mistral(
+                api_key=os.getenv("MISTRAL_API_KEY"),
+                timeout_ms=int(_REQUEST_TIMEOUT_SECONDS * 1000),
+            )
             self.provider = "mistral"
 
         elif model.startswith("command"):
@@ -61,7 +76,9 @@ class LLM:
                     f"[LLM] Cohere model '{model}' was removed — using '{resolved}' instead."
                 )
                 self.model = resolved
-            self.client = cohere.ClientV2(api_key=os.getenv("COHERE_API_KEY"))
+            self.client = cohere.ClientV2(
+                api_key=os.getenv("COHERE_API_KEY"), timeout=_REQUEST_TIMEOUT_SECONDS
+            )
             self.provider = "cohere"
 
         else:

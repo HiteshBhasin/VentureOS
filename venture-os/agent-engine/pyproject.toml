@@ -35,7 +35,14 @@ dependencies = [
     "tiktoken",
     "pyotp",
     "two-fast-auth",
-    "qrcode"
+    "qrcode",
+    # Actually imported at module load time (worker.py, memory/supabase_client.py,
+    # api/middleware/auth.py) but previously missing from this list.
+    "psycopg2-binary",
+    "supabase",
+    # LLM providers selected at runtime by model name prefix (core/llm_class.py).
+    "cohere",
+    "mistralai",
 ]
 
 [build-system]

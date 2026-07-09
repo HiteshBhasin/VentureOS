@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-load_dotenv(dotenv_path=ROOT.parents[1] / ".env")
+load_dotenv(dotenv_path=ROOT / ".env")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,6 +37,7 @@ POLL_INTERVAL_SECONDS = 5       # how long to sleep when the queue is empty
 LEASE_MINUTES = 10              # how long a worker holds a task before it can be reclaimed
 MAX_ATTEMPTS = 3                # tasks are dead-lettered after this many failures
 RETRY_BACKOFF_SECONDS = 30      # first retry delay; doubles each attempt (30s, 60s, 120s)
+SPAWNED_AGENT_CLEANUP_INTERVAL_SECONDS = 3600  # how often to sweep spawned_agents/ for stale files
 
 # ── SQL statements ────────────────────────────────────────────────────────────
 
@@ -173,6 +174,7 @@ def _mark_failed(conn, task_id: str, error: str, attempts: int) -> None:
 def run() -> None:
     from core.llm_class import LLM
     from core.orchestrator import Orchestrator
+    from core.agent_factory import cleanup_stale_spawned_agents
 
     model = os.getenv("DEFAULT_LLM_MODEL", "gpt-4")
     logger.info(f"Worker starting — model={model}, poll_interval={POLL_INTERVAL_SECONDS}s")
@@ -181,8 +183,17 @@ def run() -> None:
     conn = _connect()
     logger.info("Database connection established")
 
+    removed = cleanup_stale_spawned_agents()
+    if removed:
+        logger.info(f"Startup cleanup: removed {removed} stale spawned-agent file(s)")
+    last_cleanup_at = time.time()
+
     while True:
         try:
+            if time.time() - last_cleanup_at > SPAWNED_AGENT_CLEANUP_INTERVAL_SECONDS:
+                cleanup_stale_spawned_agents()
+                last_cleanup_at = time.time()
+
             # ── Recover any tasks whose lease expired (dead workers) ──
             reclaimed = _reclaim_dead(conn)
             if reclaimed:

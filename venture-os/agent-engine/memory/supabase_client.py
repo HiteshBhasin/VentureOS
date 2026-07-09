@@ -7,8 +7,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Load from root .env (VentureOS/.env)
-load_dotenv(dotenv_path=Path(__file__).resolve().parents[3] / ".env")
+# memory/supabase_client.py -> memory -> agent-engine (where .env lives)
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY")

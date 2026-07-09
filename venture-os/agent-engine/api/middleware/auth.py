@@ -8,7 +8,8 @@ from supabase import create_client, Client
 from dotenv import load_dotenv
 from pathlib import Path
 
-load_dotenv(dotenv_path=Path(__file__).resolve().parents[4] / ".env")
+# api/middleware/auth.py -> middleware -> api -> agent-engine (where .env lives)
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
 _SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 _SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY", "")

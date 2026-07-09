@@ -9,6 +9,8 @@ import logging
 import uuid
 import time
 import asyncio
+import hashlib
+import json
 import os
 import re
 from agents.base_agent import BaseAgent
@@ -40,6 +42,87 @@ AGENT_TYPE_KEYWORDS = {
     "review": ["review", "check", "validate", "audit", "inspect", "evaluate", "assess"],
     "runtime": ["run", "execute", "deploy", "start", "launch", "test"],
 }
+
+_SPAWNED_AGENTS_DIR = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "spawned_agents")
+)
+_REGISTRY_FILENAME = "_registry.json"
+
+
+def _capability_key(capabilities: Optional[List[str]]) -> Optional[str]:
+    """Fingerprint a capability set so two requests asking for the same skills
+    reuse one generated agent instead of minting a new file under whatever
+    name the LLM happened to pick this time. Capabilities (not the free-text
+    use_case) are the actual structural contract the Validator enforces on
+    generated code, so this is a sound dedup key. Returns None when there's
+    nothing stable to key on, in which case callers fall back to name-based
+    reuse only.
+    """
+    if not capabilities:
+        return None
+    normalized = sorted({c.strip().lower() for c in capabilities if c and c.strip()})
+    if not normalized:
+        return None
+    return hashlib.sha256("|".join(normalized).encode()).hexdigest()[:16]
+
+
+def _load_registry(agents_dir: str) -> Dict[str, Dict[str, str]]:
+    path = os.path.join(agents_dir, _REGISTRY_FILENAME)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_registry(agents_dir: str, registry: Dict[str, Dict[str, str]]) -> None:
+    path = os.path.join(agents_dir, _REGISTRY_FILENAME)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(registry, f, indent=2)
+
+
+def cleanup_stale_spawned_agents(ttl_days: Optional[float] = None) -> int:
+    """Delete generated agent files that haven't been used in ttl_days.
+
+    Reused files (by name or by capability fingerprint) have their mtime
+    bumped on every reuse, so only genuinely abandoned one-off agents age
+    out. Defaults to the SPAWNED_AGENT_TTL_DAYS env var (30 days).
+    """
+    if ttl_days is None:
+        ttl_days = float(os.getenv("SPAWNED_AGENT_TTL_DAYS", "30"))
+    if not os.path.isdir(_SPAWNED_AGENTS_DIR):
+        return 0
+
+    cutoff = time.time() - ttl_days * 86400
+    removed = 0
+    for fname in os.listdir(_SPAWNED_AGENTS_DIR):
+        if not fname.endswith(".py"):
+            continue
+        fpath = os.path.join(_SPAWNED_AGENTS_DIR, fname)
+        try:
+            if os.path.isfile(fpath) and os.path.getmtime(fpath) < cutoff:
+                os.remove(fpath)
+                removed += 1
+        except OSError:
+            continue
+
+    if removed:
+        registry = _load_registry(_SPAWNED_AGENTS_DIR)
+        stale_keys = [
+            k for k, v in registry.items()
+            if not os.path.exists(v.get("file_path", ""))
+        ]
+        for k in stale_keys:
+            registry.pop(k, None)
+        if stale_keys:
+            _save_registry(_SPAWNED_AGENTS_DIR, registry)
+        logger.info(
+            f"Cleanup: removed {removed} spawned-agent file(s) untouched for "
+            f"{ttl_days:.0f}+ days"
+        )
+    return removed
 
 
 class AgentFactory:
@@ -295,119 +378,164 @@ class AgentFactory:
         from agents.coding_agent import CodingAgent
         from .validator import Validator
 
-        # Pre-compute deterministic file path and class name from agent_name.
-        # Mirrors the logic in CodingAgent._generate_agent_task so we can check
-        # existence before deciding whether to generate.
-        _agents_dir = os.path.normpath(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "spawned_agents")
-        )
-        _file_name = re.sub(r"[^\w]+", "_", agent_name.lower()).strip("_") + "_agent.py"
-        file_path: str = os.path.join(_agents_dir, _file_name)
-        class_name: str = (
-            "".join(w.capitalize() for w in re.split(r"[\s_-]+", agent_name)) + "Agent"
-        )
+        _agents_dir = _SPAWNED_AGENTS_DIR
 
-        # Step 1 — Generate or reuse the agent source file
-        needs_generation = not os.path.exists(file_path)
-        if not needs_generation:
-            # Validate the cached file before trusting it — it may be from a failed
-            # prior generation or an incompatible version of BaseAgent.
-            validator = Validator()
-            cached_validation = validator.validate_generated_agent_code(
-                code=open(file_path).read(),
-                expected_class_name=class_name,
-                capabilities=capabilities or [],
+        # Capability-fingerprint lookup — if some earlier request already generated
+        # an agent for this exact capability set (regardless of what agent_name the
+        # Meta-Agent picked that time), reuse it instead of minting a new file.
+        cap_key = _capability_key(capabilities)
+        registry = _load_registry(_agents_dir) if cap_key else {}
+        reused_via_registry = False
+        file_path: str = ""
+        class_name: str = ""
+
+        if cap_key and cap_key in registry:
+            entry = registry[cap_key]
+            cached_path = entry.get("file_path", "")
+            cached_class = entry.get("class_name", "")
+            if cached_path and cached_class and os.path.exists(cached_path):
+                validator = Validator()
+                cached_validation = validator.validate_generated_agent_code(
+                    code=open(cached_path).read(),
+                    expected_class_name=cached_class,
+                    capabilities=capabilities or [],
+                )
+                if cached_validation.is_valid:
+                    logger.info(
+                        f"Reusing agent for capabilities {capabilities} "
+                        f"(originally generated as '{entry.get('agent_name')}'): {cached_path}"
+                    )
+                    file_path = cached_path
+                    class_name = cached_class
+                    os.utime(cached_path, None)  # bump mtime so the janitor leaves it alone
+                    reused_via_registry = True
+                else:
+                    logger.warning(
+                        f"Registry entry for capability key {cap_key} failed validation "
+                        f"({'; '.join(cached_validation.errors)}) — discarding"
+                    )
+                    registry.pop(cap_key, None)
+
+        if not reused_via_registry:
+            # Pre-compute deterministic file path and class name from agent_name.
+            # Mirrors the logic in CodingAgent._generate_agent_task so we can check
+            # existence before deciding whether to generate.
+            _file_name = re.sub(r"[^\w]+", "_", agent_name.lower()).strip("_") + "_agent.py"
+            file_path = os.path.join(_agents_dir, _file_name)
+            class_name = (
+                "".join(w.capitalize() for w in re.split(r"[\s_-]+", agent_name)) + "Agent"
             )
-            if cached_validation.is_valid:
-                logger.info(f"Reusing validated agent file for '{agent_name}': {file_path}")
-            else:
-                logger.warning(
-                    f"Cached file for '{agent_name}' failed validation "
-                    f"({'; '.join(cached_validation.errors)}) — regenerating"
+
+            # Step 1 — Generate or reuse the agent source file
+            needs_generation = not os.path.exists(file_path)
+            if not needs_generation:
+                # Validate the cached file before trusting it — it may be from a failed
+                # prior generation or an incompatible version of BaseAgent.
+                validator = Validator()
+                cached_validation = validator.validate_generated_agent_code(
+                    code=open(file_path).read(),
+                    expected_class_name=class_name,
+                    capabilities=capabilities or [],
                 )
-                os.remove(file_path)
-                needs_generation = True
-
-        if needs_generation:
-            logger.info(f"Generating new agent '{agent_name}' for use case: {use_case}")
-            max_retries = 3
-            last_errors: list = []
-            validation = None
-
-            for attempt in range(1, max_retries + 1):
-                # On retries, feed previous validation errors back to the LLM
-                prompt = use_case
-                if last_errors:
-                    prompt += (
-                        "\n\nPrevious attempt failed — fix these errors:\n"
-                        + "\n".join(f"- {e}" for e in last_errors)
+                if cached_validation.is_valid:
+                    logger.info(f"Reusing validated agent file for '{agent_name}': {file_path}")
+                    os.utime(file_path, None)  # bump mtime so the janitor leaves it alone
+                else:
+                    logger.warning(
+                        f"Cached file for '{agent_name}' failed validation "
+                        f"({'; '.join(cached_validation.errors)}) — regenerating"
                     )
+                    os.remove(file_path)
+                    needs_generation = True
 
-                try:
-                    coder = CodingAgent(
-                        agent_id=f"meta_coder_{uuid.uuid4().hex[:8]}", llm=self.llm
-                    )
-                    result = coder.execute_task(
-                        {
-                            "type": "generate_agent",
-                            "use_case": prompt,
-                            "agent_name": agent_name,
-                            "capabilities": capabilities or [],
-                            "save_path": file_path,
-                        }
-                    )
+            if needs_generation:
+                logger.info(f"Generating new agent '{agent_name}' for use case: {use_case}")
+                max_retries = 3
+                last_errors: list = []
+                validation = None
 
-                    if result.get("status") != "success":
-                        last_errors = [
-                            f"CodingAgent returned status '{result.get('status')}'"
-                        ]
-                        logger.warning(
-                            f"Attempt {attempt}/{max_retries}: generation not successful, retrying..."
+                for attempt in range(1, max_retries + 1):
+                    # On retries, feed previous validation errors back to the LLM
+                    prompt = use_case
+                    if last_errors:
+                        prompt += (
+                            "\n\nPrevious attempt failed — fix these errors:\n"
+                            + "\n".join(f"- {e}" for e in last_errors)
                         )
-                        if attempt < max_retries:
-                            retry_delay = 15.0 * attempt  # 15s, 30s
-                            logger.warning(f"Waiting {retry_delay:.0f}s before retry {attempt + 1}...")
-                            time.sleep(retry_delay)
-                        continue
 
-                    validator = Validator()
-                    validation = validator.validate_generated_agent_code(
-                        code=result["code"],
-                        expected_class_name=class_name,
-                        capabilities=capabilities or [],
+                    try:
+                        coder = CodingAgent(
+                            agent_id=f"meta_coder_{uuid.uuid4().hex[:8]}", llm=self.llm
+                        )
+                        result = coder.execute_task(
+                            {
+                                "type": "generate_agent",
+                                "use_case": prompt,
+                                "agent_name": agent_name,
+                                "capabilities": capabilities or [],
+                                "save_path": file_path,
+                            }
+                        )
+
+                        if result.get("status") != "success":
+                            last_errors = [
+                                f"CodingAgent returned status '{result.get('status')}'"
+                            ]
+                            logger.warning(
+                                f"Attempt {attempt}/{max_retries}: generation not successful, retrying..."
+                            )
+                            if attempt < max_retries:
+                                retry_delay = 15.0 * attempt  # 15s, 30s
+                                logger.warning(f"Waiting {retry_delay:.0f}s before retry {attempt + 1}...")
+                                time.sleep(retry_delay)
+                            continue
+
+                        validator = Validator()
+                        validation = validator.validate_generated_agent_code(
+                            code=result["code"],
+                            expected_class_name=class_name,
+                            capabilities=capabilities or [],
+                        )
+
+                        if validation.is_valid:
+                            break  # Success — exit retry loop
+
+                        # Validation failed — remove the bad file and try again
+                        last_errors = validation.errors
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                            logger.warning(f"Removed invalid generated file: {file_path}")
+                        logger.warning(
+                            f"Attempt {attempt}/{max_retries}: validation failed — "
+                            + "; ".join(last_errors)
+                        )
+
+                    except Exception as e:
+                        last_errors = [str(e)]
+                        logger.warning(
+                            f"Attempt {attempt}/{max_retries}: generation raised exception: {e}"
+                        )
+                else:
+                    # Loop completed without a successful break — all attempts exhausted
+                    raise RuntimeError(
+                        f"Failed to generate valid agent '{agent_name}' after {max_retries} attempts. "
+                        f"Last errors: {'; '.join(last_errors)}"
                     )
 
-                    if validation.is_valid:
-                        break  # Success — exit retry loop
-
-                    # Validation failed — remove the bad file and try again
-                    last_errors = validation.errors
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                        logger.warning(f"Removed invalid generated file: {file_path}")
+                if validation is not None and validation.warnings:
                     logger.warning(
-                        f"Attempt {attempt}/{max_retries}: validation failed — "
-                        + "; ".join(last_errors)
+                        f"Generated agent '{agent_name}' warnings: "
+                        + "; ".join(validation.warnings)
                     )
+                logger.info(f"Agent source written to {file_path}")
 
-                except Exception as e:
-                    last_errors = [str(e)]
-                    logger.warning(
-                        f"Attempt {attempt}/{max_retries}: generation raised exception: {e}"
-                    )
-            else:
-                # Loop completed without a successful break — all attempts exhausted
-                raise RuntimeError(
-                    f"Failed to generate valid agent '{agent_name}' after {max_retries} attempts. "
-                    f"Last errors: {'; '.join(last_errors)}"
-                )
-
-            if validation is not None and validation.warnings:
-                logger.warning(
-                    f"Generated agent '{agent_name}' warnings: "
-                    + "; ".join(validation.warnings)
-                )
-            logger.info(f"Agent source written to {file_path}")
+            if cap_key:
+                registry[cap_key] = {
+                    "file_path": file_path,
+                    "class_name": class_name,
+                    "agent_name": agent_name,
+                }
+                _save_registry(_agents_dir, registry)
         # Step 2 — Dynamically load the module
         module_name = f"agents.{agent_name}_agent"
         spec = importlib.util.spec_from_file_location(module_name, file_path)

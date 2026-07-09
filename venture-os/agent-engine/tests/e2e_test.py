@@ -26,10 +26,9 @@ import pytest
 from dotenv import load_dotenv
 
 # ── Path setup ───────────────────────────────────────────────────────────────
-ROOT = Path(__file__).resolve().parents[1]          # agent-engine/
-REPO_ROOT = ROOT.parents[1]                          # VentureOS/
+ROOT = Path(__file__).resolve().parents[1]          # agent-engine/ (.env lives here)
 sys.path.insert(0, str(ROOT))
-load_dotenv(dotenv_path=REPO_ROOT / ".env")
+load_dotenv(dotenv_path=ROOT / ".env")
 
 # ── Config ───────────────────────────────────────────────────────────────────
 BASE_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
