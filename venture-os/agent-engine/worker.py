@@ -132,7 +132,7 @@ SET status = 'active', activity = %s, updated_at = NOW()
 WHERE id = (
     SELECT id FROM public.agents
     WHERE user_id = %s AND status = 'idle'
-    ORDER BY created_at ASC
+    ORDER BY updated_at ASC
     LIMIT 1
     FOR UPDATE SKIP LOCKED
 )

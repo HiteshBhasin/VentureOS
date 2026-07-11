@@ -1,4 +1,6 @@
 # Task endpoints — all queries filtered by authenticated user_id
+import os
+from pathlib import Path as FSPath
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 from pydantic import BaseModel
@@ -7,6 +9,9 @@ from api.middleware.auth import get_current_user
 from memory.supabase_client import engine
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+# api/routes/task_routes.py -> routes -> api -> agent-engine -> generated_projects/
+_GENERATED_ROOT = (FSPath(__file__).resolve().parents[2] / "generated_projects").resolve()
 
 VALID_STATUSES = {
     "pending",
@@ -188,6 +193,87 @@ async def update_task_status(
     if not res.data:
         raise HTTPException(status_code=404, detail="Task not found.")
     return {"task": res.data[0]}
+
+
+# ==================== Generated Project Files ====================
+# Lets the dashboard show a completed task's output in-page — file list +
+# readable content — instead of a filesystem path the user has to go find
+# themselves in an OS file browser.
+
+
+async def _get_task_or_404(task_id: str, user_id: str) -> Dict[str, Any]:
+    res = (
+        engine.table("tasks")
+        .select("*")
+        .eq("id", task_id)
+        .eq("user_id", user_id)
+        .single()
+        .execute()
+    )
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    return res.data
+
+
+def _resolve_project_dir(task: Dict[str, Any]) -> FSPath:
+    """Resolve a task's project_path, enforcing it stays within
+    generated_projects/ — the DB value is trusted data we wrote ourselves,
+    but validating anyway means a compromised/edited row can't be used to
+    read arbitrary files off the server's filesystem."""
+    result = task.get("result") or {}
+    project_path = result.get("project_path")
+    if not project_path:
+        raise HTTPException(
+            status_code=404, detail="This task has no generated project output."
+        )
+    resolved = FSPath(project_path).resolve()
+    if resolved != _GENERATED_ROOT and _GENERATED_ROOT not in resolved.parents:
+        raise HTTPException(status_code=400, detail="Invalid project path.")
+    if not resolved.is_dir():
+        raise HTTPException(
+            status_code=404, detail="Project folder no longer exists on disk."
+        )
+    return resolved
+
+
+@router.get("/{task_id}/files")
+async def list_task_files(
+    task_id: str = Path(...),
+    user_id: str = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """List every file in a completed task's generated project folder."""
+    task = await _get_task_or_404(task_id, user_id)
+    project_dir = _resolve_project_dir(task)
+    files = [
+        {
+            "path": str(p.relative_to(project_dir)).replace(os.sep, "/"),
+            "size_bytes": p.stat().st_size,
+        }
+        for p in sorted(project_dir.rglob("*"))
+        if p.is_file()
+    ]
+    return {"files": files}
+
+
+@router.get("/{task_id}/files/{file_path:path}")
+async def get_task_file(
+    task_id: str = Path(...),
+    file_path: str = Path(...),
+    user_id: str = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return the text content of one file from a task's generated project."""
+    task = await _get_task_or_404(task_id, user_id)
+    project_dir = _resolve_project_dir(task)
+    target = (project_dir / file_path).resolve()
+    if target != project_dir and project_dir not in target.parents:
+        raise HTTPException(status_code=400, detail="Invalid file path.")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found.")
+    try:
+        content = target.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not read file: {exc}")
+    return {"path": file_path, "content": content, "size_bytes": target.stat().st_size}
 
 
 # ==================== Task Execution ====================

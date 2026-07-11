@@ -1,5 +1,5 @@
 import { Agent, CreateAgentRequest } from '@/types/agent';
-import { Task, ActiveGoal, SystemStatus, CreateTaskRequest } from '@/types/task';
+import { Task, ActiveGoal, SystemStatus, CreateTaskRequest, TaskFile, TaskFileContent } from '@/types/task';
 import { MemoryEntry } from '@/types/memory';
 import { getToken, logout as clearLocalAuth } from '@/lib/auth';
 
@@ -89,6 +89,16 @@ export async function updateTask(id: string, payload: Partial<CreateTaskRequest>
 
 export async function deleteTask(id: string): Promise<void> {
   await apiFetch(`/tasks/${id}`, { method: 'DELETE' });
+}
+
+export async function getTaskFiles(id: string): Promise<TaskFile[]> {
+  const data = await apiFetch<{ files: TaskFile[] }>(`/tasks/${id}/files`);
+  return data.files;
+}
+
+export async function getTaskFile(id: string, path: string): Promise<TaskFileContent> {
+  const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+  return apiFetch<TaskFileContent>(`/tasks/${id}/files/${encodedPath}`);
 }
 
 // ── System ───────────────────────────────────────────────

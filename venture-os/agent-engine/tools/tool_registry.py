@@ -501,4 +501,7 @@ class ToolRegistry:
         if not tool or not tool.enabled:
             raise RuntimeError(f"Tool '{tool_name}' is not available or enabled")
 
-        return tool.returns(**args) if tool.returns else None
+        handler = self._handlers.get(tool_name)
+        if not handler:
+            raise RuntimeError(f"Tool '{tool_name}' has no registered handler")
+        return handler(**args)

@@ -119,6 +119,7 @@ class Orchestrator:
 
         # Initialize tool registry
         self.tool_registry = ToolRegistry()
+        self._register_default_tools()
         logger.debug("ToolRegistry initialized")
 
         # Initialize LLM router
@@ -317,6 +318,7 @@ class Orchestrator:
                         agent_name=agent_name,
                         capabilities=spec.get("capabilities", []),
                     )
+                    self.inject_agent_dependencies(agent)
                     self.register_active_agent(agent)
                     spawned[agent_name] = {
                         "agent": agent,
@@ -1219,17 +1221,66 @@ class Orchestrator:
             return self.tool_registry.get_all_tools()
         return []
 
-    # def _register_default_tools(self) -> None:
-    # web_search = WebSearch(config=self.config.get("web_search", {}))
-    # self.tool_registry.register(
-    #     ToolDefinition(name="web_search", description="Search the web", ...),
-    #     handler=web_search.search          # ← pointing to the existing method
-    # )
-    # scraper = Scraper()
-    # self.tool_registry.register(
-    #     ToolDefinition(name="scrape_url", ...),
-    #     handler=scraper.scrape             # ← existing method
-    # )
+    def _register_default_tools(self) -> None:
+        """Wire real external tools into the registry so agents can call
+        ``self.use_tool(...)`` for facts instead of only ever reciting
+        training data via ``_invoke_llm``. Handlers return plain JSON-safe
+        dicts, not raw dataclasses, since task results get persisted as
+        JSONB.
+        """
+        if not self.tool_registry:
+            return
+        from tools.tool_registry import ToolCategory, ToolDefinition, ToolParameter
+        from tools.web_search import WebSearch
+
+        web_search = WebSearch(config=self.config.get("web_search", {}))
+
+        def _web_search_handler(query: str, num_results: int = 5) -> Dict[str, Any]:
+            response = web_search.search(query, num_results=num_results)
+            return {
+                "query": response.query,
+                "engine": response.engine.value,
+                "total_results": response.total_results,
+                "results": [
+                    {
+                        "title": r.title,
+                        "url": r.url,
+                        "snippet": r.snippet,
+                        "source": r.source,
+                    }
+                    for r in response.results
+                ],
+            }
+
+        self.tool_registry.register(
+            ToolDefinition(
+                name="web_search",
+                description=(
+                    "Search the live web for current, factual information. Use "
+                    "this instead of guessing whenever a task needs up-to-date "
+                    "or real-world facts — news, current events, specific "
+                    "companies/products, prices, etc."
+                ),
+                category=ToolCategory.WEB,
+                parameters=[
+                    ToolParameter(
+                        name="query",
+                        type="string",
+                        description="The search query",
+                        required=True,
+                    ),
+                    ToolParameter(
+                        name="num_results",
+                        type="integer",
+                        description="Maximum number of results to return",
+                        required=False,
+                        default=5,
+                    ),
+                ],
+            ),
+            handler=_web_search_handler,
+        )
+        logger.info("Registered default tools: web_search")
 
     def execute_tool(self, tool_name: str, args: Dict[str, Any]) -> Any:
         """Execute tool via tool executor with safety checks."""

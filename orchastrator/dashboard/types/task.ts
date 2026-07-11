@@ -14,6 +14,17 @@ export interface Task {
   error?: string | null;
 }
 
+export interface TaskFile {
+  path: string;
+  size_bytes: number;
+}
+
+export interface TaskFileContent {
+  path: string;
+  content: string;
+  size_bytes: number;
+}
+
 export interface ActiveGoal {
   id: string;
   title: string;

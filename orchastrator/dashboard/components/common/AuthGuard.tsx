@@ -6,11 +6,15 @@ import { isAuthenticated } from '@/lib/auth';
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  // Lazy initializer: null on server (SSR safe), actual token check on client
-  const [authenticated] = useState<boolean | null>(() => {
-    if (typeof window === 'undefined') return null;
-    return isAuthenticated();
-  });
+  // Start at null on both server AND the client's hydration pass — reading
+  // `typeof window` in the initializer made the client's first render diverge
+  // from the server's immediately, which is a hydration mismatch. The actual
+  // check only happens after mount, in an effect (client-only, post-hydration).
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    setAuthenticated(isAuthenticated());
+  }, []);
 
   useEffect(() => {
     if (authenticated === false) {

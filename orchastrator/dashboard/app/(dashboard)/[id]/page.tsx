@@ -7,6 +7,7 @@ import { Task } from '@/types/task';
 import { getTask } from '@/lib/api';
 import { Loading } from '@/components/common/Loading';
 import { Error as ErrorView } from '@/components/common/Error';
+import { ProjectViewer } from '@/components/dashboard/ProjectViewer';
 
 function statusStyle(status: Task['status']) {
   switch (status) {
@@ -80,12 +81,7 @@ export default function DetailPage() {
         </div>
       )}
 
-      {task.result?.project_path && (
-        <div className="rounded border border-zinc-800 bg-zinc-900/50 p-4 max-w-md">
-          <div className="text-[9px] text-zinc-600 tracking-widest uppercase mb-1.5">Project Output</div>
-          <code className="text-[10px] text-cyan-400 break-all">{task.result.project_path}</code>
-        </div>
-      )}
+      {task.result?.project_path && <ProjectViewer taskId={task.id} />}
     </div>
   );
 }

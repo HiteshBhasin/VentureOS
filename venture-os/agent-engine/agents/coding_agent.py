@@ -150,10 +150,17 @@ class CodingAgent(BaseAgent):
         3. Implement `execute_task(self, task: Dict[str, Any]) -> Dict[str, Any]`.
         4. In `execute_task`, route using `task.get("type")` — NOT "action" or anything else.
         5. Each capability listed above becomes both a routing key in `execute_task` and a private method.
-        6. Each private method must call `self._invoke_llm(prompt, system_prompt)` to do its work.
+        6. Each private method must do its work with ONE of these two:
+           - `self.use_tool("web_search", {{"query": "...", "num_results": 5}})` — call this
+             whenever the capability needs current, factual, or real-world information (news,
+             prices, specific companies/products, "what is the latest...", competitor data, etc.).
+             This performs a REAL web search and returns real results — prefer it over guessing
+             whenever the capability's job is to find out something true, not to reason or write.
+           - `self._invoke_llm(prompt, system_prompt)` — for pure reasoning, writing, or synthesis
+             work that doesn't depend on current external facts.
         7. On an unknown type, return `{{"status": "error", "error": f"Unknown task type: {{task.get('type')}}"}}`.
         8. Return ONLY raw Python code — no markdown fences, no explanation.
-        
+
         """
         # ---------------prompt ended-----------------------------------------------------------------------------------
         system_prompt = (

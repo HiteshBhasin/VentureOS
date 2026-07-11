@@ -21,6 +21,7 @@ class BaseAgent(ABC):
         self.llm = llm
         self.memory = memory
         self.tools = tools or []
+        self.tool_registry = None
         self.config = config or {}
         self.status = "idle"  # idle, running, paused, stopped, error
         self.context: Dict[str, Any] = {}
@@ -99,6 +100,18 @@ class BaseAgent(ABC):
             logger.error(f"LLM invocation failed: {e}")
             self.status = "error"
             return None
+
+    def use_tool(self, tool_name: str, args: Dict[str, Any]) -> Any:
+        """Call a real tool the orchestrator wired in (e.g. ``web_search``),
+        as opposed to ``_invoke_llm`` which only ever produces text from the
+        model's training data. Raises if no tool registry was injected, or
+        if the tool isn't registered — callers should fall back to
+        ``_invoke_llm`` in that case rather than fabricate a result."""
+        if not self.tool_registry:
+            raise RuntimeError(
+                f"No tool registry available on this agent — cannot call '{tool_name}'"
+            )
+        return self.tool_registry.execute(tool_name, args)
 
     # ==================== Context & History ====================
 
