@@ -2,3 +2,17 @@ false positive in "_DANGEROUS_PATTERNS"
 llm_router` never used in `process_user_request
 BudgetManager monitors but never gates LLM calls
 TaskGraph not driving `process_user_request` execution
+
+1. Stop generating a brand-new agent class from scratch for every task — this is the single biggest fix. Right now every subtask spawns an LLM that writes fresh Python code, gets validated, and often fails ("capability has no corresponding method," 'str' object has no attribute 'get' — we saw both repeatedly). That's why things take 5-10 minutes and burn 15-20+ LLM calls per task. Swapping to a small set of solid, reused specialist roles (researcher, writer, coder, reviewer) that just get parameterized per task instead of regenerated would cut latency and cost dramatically and fix most of the reliability failures in one move.
+
+2. A real assembly step. Sub-agents currently hand back prose; nothing integrates the pieces into one coherent deliverable. Add an explicit final step that asks for structured output (a manifest of filename→content pairs, or one well-formed document) instead of scraping code blocks out of paragraphs.
+
+3. Better-grounded research. The web search I wired in works but is narrow (DuckDuckGo's free tier). Swapping to Serper or Tavily (same registration mechanism, just an API key) makes the research use case actually trustworthy instead of only working for exact topic names.
+
+4. Real dependency ordering. There's already a whole task-graph/DAG system built (task_graph.py) that the main pipeline never uses — wiring it in would let multi-step goals like "design the schema, then write the queries" execute in correct order instead of as an unordered flat list.
+
+5. Actually "runnable" output, at least for the simple case. For anything that produces a static site, add a step that writes the files and starts a local file server pointing at them, so "here's your site" means something you can click open — not full deployment infra, just the smallest version of "running."
+
+6. Persistent context across related tasks. Right now every request starts fresh; there's a memory system but it's barely used. Worth it if you're iterating on the same project across multiple submissions.
+
+The honest order I'd tackle these: #1 first (fixes cost, speed, and reliability all at once, and everything else gets easier once agents aren't randomly broken), then #2 (this is what actually gets you from "report" to "product"), then #3 if research quality matters to you, #4 and #5 after that.
