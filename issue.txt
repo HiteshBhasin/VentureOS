@@ -84,7 +84,7 @@ agent_factory.py
 **Bottom line**
 - Your diagnosis is correct: the issue lies in the architecture path that always routes through dynamic class generation from meta-agent roster output, plus weak task-shape validation and warning-only capability checks.  
 - The central hotspots are:
-orchestrator.py,
-agent_factory.py,
-meta_agent.py,
-validator.py.
+orchestrator.py, - 316
+agent_factory.py, - 358
+meta_agent.py, - 62
+validator.py. - 352
