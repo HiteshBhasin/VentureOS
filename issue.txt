@@ -16,3 +16,75 @@ TaskGraph not driving `process_user_request` execution
 6. Persistent context across related tasks. Right now every request starts fresh; there's a memory system but it's barely used. Worth it if you're iterating on the same project across multiple submissions.
 
 The honest order I'd tackle these: #1 first (fixes cost, speed, and reliability all at once, and everything else gets easier once agents aren't randomly broken), then #2 (this is what actually gets you from "report" to "product"), then #3 if research quality matters to you, #4 and #5 after that.
+
+Updated todo list
+
+I’ve finished the code trace and will now give you a pure diagnostic report with exact hotspots, no code changes. I’m pulling one last pass of precise line references so you can patch confidently.
+
+Searched for regex `def process_user_request|spawn_dynamic_agent\(|for spec in roster|for task in entry\["tasks"\]|task\.get\("type"\)` (`**/venture-os/agent-engine/core/orchestrator.py`), 7 results
+
+Searched for regex `def spawn_dynamic_agent|Generating new agent|max_retries = 3|time\.sleep\(|validate_generated_agent_code\(|register_agent_type\(agent_name|def _determine_agent_type|if "type" in task` (`**/venture-os/agent-engine/core/agent_factory.py`), 10 results
+
+Searched for regex `def _plan_agent_roster|EXACTLY 3 to 5 specialized AI agents|capabilities : list of method signatures` (`**/venture-os/agent-engine/core/meta_agent.py`), 4 results
+
+Searched for regex `def validate_generated_agent_code|Capability '.*' has no corresponding method|is_valid = len\(errors\) == 0` (`**/venture-os/agent-engine/core/validator.py`), 15 results
+
+No code changes were made. Here is where the issue is coming from.
+
+**Findings (ordered by impact)**
+
+1. Dynamic agent generation is still the default execution path
+- In the main request flow, every planned roster entry is spawned via dynamic generation, not via fixed reusable roles:
+orchestrator.py
+- The same pattern is used in the async streaming path through _spawn_from_spec:
+orchestrator.py
+orchestrator.py
+- This is the primary reason you see high latency and lots of LLM calls.
+
+2. The factory explicitly generates brand-new classes with retries and sleeps
+- Dynamic generation entry point:
+agent_factory.py
+- It can regenerate up to 3 times:
+agent_factory.py
+- It includes blocking retry backoff sleep:
+agent_factory.py
+- It dynamically imports and registers each generated class:
+agent_factory.py
+- This is exactly the 5-10 minute / high-call behavior you described.
+
+3. Meta-agent prompt design pushes novelty instead of reuse
+- Roster planner asks for exactly 3-5 specialized agents with custom names/capabilities:
+meta_agent.py
+- It asks for capability signatures and custom task typing:
+meta_agent.py
+meta_agent.py
+- This structurally steers the system toward generating new classes instead of mapping to stable role agents.
+
+4. Source of "str object has no attribute get" is weak schema/type guarding around LLM roster tasks
+- Orchestrator assumes each task is a dict and immediately calls task.get:
+orchestrator.py
+- Async path does the same:
+orchestrator.py
+orchestrator.py
+- If the LLM emits tasks as strings (or malformed entries), this will throw exactly that error.
+- I did not find a strict roster schema validation step before these loops.
+
+5. Source of "capability has no corresponding method" is validator warning-only logic
+- The message is produced here:
+validator.py
+- But missing capability methods are warnings, not hard failures, because validity is only based on errors:
+validator.py
+- Result: agents can pass validation while still having capability-to-method mismatches, then fail at runtime.
+
+**Secondary reliability risk**
+- In the non-dynamic spawn path, task type is treated as agent type if present:
+agent_factory.py
+- If task type is generate_code instead of coding, this can select an invalid agent type (different path, but related fragility).
+
+**Bottom line**
+- Your diagnosis is correct: the issue lies in the architecture path that always routes through dynamic class generation from meta-agent roster output, plus weak task-shape validation and warning-only capability checks.  
+- The central hotspots are:
+orchestrator.py,
+agent_factory.py,
+meta_agent.py,
+validator.py.
