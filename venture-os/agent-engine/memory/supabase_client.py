@@ -33,6 +33,7 @@ def create_table_raw(sql: str) -> None:
       DATABASE_URL=postgresql://postgres:<password>@db.<ref>.supabase.co:5432/postgres
     """
     import psycopg2  # lazy import — only needed for raw DDL
+
     db_url = os.getenv("DATABASE_URL")
     if not db_url:
         raise EnvironmentError(
