@@ -53,7 +53,6 @@ export function TaskForm({ onSubmit, loading }: TaskFormProps): React.JSX.Elemen
         <option value="low">LOW</option>
         <option value="medium">MEDIUM</option>
         <option value="high">HIGH</option>
-        <option value="critical">CRITICAL</option>
       </select>
       <button
         type="submit"

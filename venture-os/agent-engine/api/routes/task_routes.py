@@ -22,7 +22,7 @@ VALID_STATUSES = {
     "failed",
     "cancelled",
 }
-VALID_PRIORITIES = {"low", "medium", "high", "critical"}
+VALID_PRIORITIES = {"low", "medium", "high"}
 
 # ==================== Request Models ====================
 

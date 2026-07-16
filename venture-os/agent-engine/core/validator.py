@@ -57,6 +57,7 @@ class Validator:
         "cancelled",
     }
     VALID_AGENT_TYPES = {"coding", "research", "review", "runtime"}
+    VALID_PRIORITIES = {"low", "medium", "high"}
     REQUIRED_TASK_FIELDS = {"id", "name", "status", "agent_type"}
 
     def validate_task(self, task: Dict[str, Any]) -> ValidationResult:
@@ -70,7 +71,7 @@ class Validator:
             "status": str,       # Required - one of VALID_STATUSES
             "dependencies": [],  # Optional - list of dependent task IDs
             "agent_type": str,   # Required - one of VALID_AGENT_TYPES
-            "priority": int      # Optional - task priority (1-10)
+            "priority": str      # Optional - one of VALID_PRIORITIES
         }
         """
         errors: List[str] = []
@@ -130,14 +131,12 @@ class Validator:
                         )
 
         # Validate 'priority' field (optional)
-        if "priority" in task:
-            if not isinstance(task["priority"], int):
-                errors.append("Field 'priority' must be an integer")
-                field_errors.setdefault("priority", []).append("invalid_type")
-            elif not (1 <= task["priority"] <= 10):
-                warnings.append(
-                    f"Priority {task['priority']} is outside recommended range (1-10)"
+        if "priority" in task and task["priority"]:
+            if task["priority"] not in self.VALID_PRIORITIES:
+                errors.append(
+                    f"Invalid priority '{task['priority']}'. Must be one of: {', '.join(self.VALID_PRIORITIES)}"
                 )
+                field_errors.setdefault("priority", []).append("invalid_value")
 
         # Validate 'description' field (optional)
         if "description" in task and task["description"]:

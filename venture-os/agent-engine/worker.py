@@ -60,11 +60,10 @@ WHERE id = (
       AND visible_at <= NOW()
     ORDER BY
         CASE priority
-            WHEN 'critical' THEN 1
-            WHEN 'high'     THEN 2
-            WHEN 'medium'   THEN 3
-            WHEN 'low'      THEN 4
-            ELSE 5
+            WHEN 'high'     THEN 1
+            WHEN 'medium'   THEN 2
+            WHEN 'low'      THEN 3
+            ELSE 4
         END ASC,
         created_at ASC
     LIMIT 1

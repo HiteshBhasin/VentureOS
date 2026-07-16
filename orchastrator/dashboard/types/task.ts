@@ -3,7 +3,7 @@ export interface Task {
   title: string;
   description: string;
   status: 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
-  priority: 'low' | 'medium' | 'high' | 'critical';
+  priority: 'low' | 'medium' | 'high';
   progress: number;        // 0-100
   tags: string[];
   agent_id: string | null;

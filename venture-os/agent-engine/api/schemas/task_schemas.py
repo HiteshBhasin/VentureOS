@@ -21,13 +21,12 @@ class TaskStatus(str, Enum):
     TIMEOUT = "timeout"
 
 
-class TaskPriority(int, Enum):
+class TaskPriority(str, Enum):
     """Task priority levels."""
 
-    LOW = 1
-    NORMAL = 2
-    HIGH = 3
-    CRITICAL = 4
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
 
 
 class TaskType(str, Enum):
@@ -48,7 +47,7 @@ class TaskBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = None
     task_type: TaskType = TaskType.SIMPLE
-    priority: TaskPriority = TaskPriority.NORMAL
+    priority: TaskPriority = TaskPriority.MEDIUM
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
