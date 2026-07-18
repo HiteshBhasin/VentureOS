@@ -94,6 +94,40 @@ AND status = 'pending'
 RETURNING id, title, description, user_id, agent_id,
           priority, attempts, idempotency_key;
 """
+
+# The REAPER
+
+
+_THE_REAPER = """
+
+UPDATE public.tasks
+SET 
+    status     = 'pending',
+    claimed_at = NULL,
+    visible_at = now(),
+    attempts   = attempts + 1,
+    updated_at = now()
+WHERE id IN (
+    SELECT id 
+    FROM public.tasks
+    WHERE status='running' 
+    AND visible_at <= now()
+    LIMIT 100
+    FOR UPDATE SKIP LOCKED
+)
+"""
+_RETIRED_TASKS = """
+UPDATE public.tasks
+SET
+    status = "failed",
+    error  = "exceeded max attempts",
+    updated_at = now()
+WHERE status = "running"
+    AND visible_at <=nows()
+    AND attempts>=$1
+"""
+
+
 # Return stale 'running' tasks whose lease expired back to 'pending'
 # so another worker (or the next poll) can reclaim them.
 _RECLAIM_SQL = """
@@ -216,6 +250,16 @@ async def clain_anyTask(conn, worker_id):
         if row:
             return
     return None
+
+
+async def reaper(conn, interval=30, max_attemps=5):
+    try:
+        with conn.acquire() as cur:
+            await cur.execute(_THE_REAPER, max_attemps)
+            await cur.execute(_RETIRED_TASKS, max_attemps)
+    except:
+        raise
+    await asyncio.sleep(interval)
 
 
 def _reclaim_dead(conn) -> int:
