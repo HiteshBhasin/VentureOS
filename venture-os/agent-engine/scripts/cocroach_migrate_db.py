@@ -29,15 +29,21 @@ logger = logging.getLogger(__name__)
 
 import psycopg2
 
+conn = None
 try:
     conn = psycopg2.connect(os.getenv("COCRAOCH_DB_URL"))
     if conn:
         logger.info("connection has been established", conn)
 except Exception as e:
     logger.exception(f"cocroach connection: ", e)
+    conn = None
 
 
 MIGRATION = """
+DROP TABLE IF EXISTS public.profiles;
+DROP TABLE IF EXISTS public.agents CASCADE;
+DROP TABLE IF EXISTS public.tasks;
+DROP TABLE IF EXISTS public.memory_items;
 -- ─────────────────────────────────────────────────────────
 -- Enable UUID extension (idempotent)
 -- ─────────────────────────────────────────────────────────
@@ -83,6 +89,7 @@ CREATE INDEX IF NOT EXISTS idx_agents_status  ON public.agents(status);
 -- ─────────────────────────────────────────────────────────
 -- tasks
 -- ─────────────────────────────────────────────────────────
+
 CREATE TABLE IF NOT EXISTS public.tasks (
     id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id     UUID NOT NULL,
@@ -91,8 +98,10 @@ CREATE TABLE IF NOT EXISTS public.tasks (
     title       TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     type        TEXT NOT NULL DEFAULT 'custom',
+    bucket      INT2 GENERATED ALWAYS AS (abs(fnv32a(id::STRING) % 16)) STORED,
     status      TEXT NOT NULL DEFAULT 'pending',
-    priority    TEXT NOT NULL DEFAULT 'medium',
+    priority    TEXT NOT NULL DEFAULT 'medium'
+                CHECK (priority IN ('low', 'medium', 'high')),
     progress    INTEGER NOT NULL DEFAULT 0,
     tags        JSONB NOT NULL DEFAULT '[]',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -130,17 +139,40 @@ ALTER TABLE public.tasks
   ADD COLUMN IF NOT EXISTS visible_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   ADD COLUMN IF NOT EXISTS claimed_at   TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS result       JSONB,
-  ADD COLUMN IF NOT EXISTS error        TEXT;
+  ADD COLUMN IF NOT EXISTS error        TEXT,
+  ADD COLUMN IF NOT EXISTS priority_rank INT2 NOT NULL
+      AS (CASE priority
+            WHEN 'high'   THEN 1
+            WHEN 'medium' THEN 2
+            WHEN 'low'    THEN 3
+            ELSE 4
+          END) STORED,
+  ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_tasks_queue
-  ON public.tasks (status, visible_at);
+  ON public.tasks (bucket, status, priority_rank, visible_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_idem
+  ON public.tasks (idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+
+-- Sanity check: priority is one of low/medium/high (existing tables predate the
+-- inline CHECK on the CREATE TABLE above).
+ALTER TABLE public.tasks
+  ADD CONSTRAINT IF NOT EXISTS tasks_priority_check
+  CHECK (priority IN ('low', 'medium', 'high'));
 """
 
 
 def connection() -> None:
-    if conn:
-        conn.autocommit = True
+    if not conn:
+        logger.error(
+            "Database connection not established. Cannot proceed with migration."
+        )
+        return
+
     try:
+        conn.autocommit = True
         with conn.cursor() as cur:
             print("running migration to Cocroach_db")
             cur.execute(MIGRATION)
@@ -153,11 +185,10 @@ def connection() -> None:
             for t in tables:
                 print(f"   - {t}")
     except Exception as e:
-        logger.exception(
-            " connection either didnt establish or established partially: ", e
-        )
+        logger.exception("Connection either didn't establish or established partially")
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 
 if __name__ == "__main__":

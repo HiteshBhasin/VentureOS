@@ -33,11 +33,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ── Configuration ────────────────────────────────────────────────────────────
-POLL_INTERVAL_SECONDS = 5       # how long to sleep when the queue is empty
-LEASE_MINUTES = 10              # how long a worker holds a task before it can be reclaimed
-MAX_ATTEMPTS = 3                # tasks are dead-lettered after this many failures
-RETRY_BACKOFF_SECONDS = 30      # first retry delay; doubles each attempt (30s, 60s, 120s)
-SPAWNED_AGENT_CLEANUP_INTERVAL_SECONDS = 3600  # how often to sweep spawned_agents/ for stale files
+POLL_INTERVAL_SECONDS = 5  # how long to sleep when the queue is empty
+LEASE_MINUTES = 10  # how long a worker holds a task before it can be reclaimed
+MAX_ATTEMPTS = 3  # tasks are dead-lettered after this many failures
+RETRY_BACKOFF_SECONDS = 30  # first retry delay; doubles each attempt (30s, 60s, 120s)
+SPAWNED_AGENT_CLEANUP_INTERVAL_SECONDS = (
+    3600  # how often to sweep spawned_agents/ for stale files
+)
 TASK_TIMEOUT_HOURS = float(os.getenv("TASK_TIMEOUT_HOURS", "24"))  # dead-letter SLA
 DEADLETTER_SWEEP_INTERVAL_SECONDS = 300  # how often to check for tasks past the SLA
 
@@ -46,32 +48,52 @@ DEADLETTER_SWEEP_INTERVAL_SECONDS = 300  # how often to check for tasks past the
 # Atomically grab the highest-priority pending task whose lease has not started
 # (or whose lease has expired — covers dead-worker recovery).
 # FOR UPDATE SKIP LOCKED ensures two workers never claim the same row.
-_CLAIM_SQL = f"""
+# _CLAIM_SQL = f"""
+# UPDATE public.tasks
+# SET
+#     status     = 'running',
+#     claimed_at = NOW(),
+#     visible_at = NOW() + INTERVAL '{LEASE_MINUTES} minutes',
+#     attempts   = attempts + 1,
+#     updated_at = NOW()
+# WHERE id = (
+#     SELECT id FROM public.tasks
+#     WHERE status = 'pending'
+#       AND visible_at <= NOW()
+#     ORDER BY
+#         CASE priority
+#             WHEN 'high'     THEN 1
+#             WHEN 'medium'   THEN 2
+#             WHEN 'low'      THEN 3
+#             ELSE 4
+#         END ASC,
+#         created_at ASC
+#     LIMIT 1
+#     FOR UPDATE SKIP LOCKED
+# )
+# RETURNING id, title, description, user_id, priority, attempts, agent_id;
+# """
+_CLAIM_SQL = """
 UPDATE public.tasks
 SET
     status     = 'running',
-    claimed_at = NOW(),
-    visible_at = NOW() + INTERVAL '{LEASE_MINUTES} minutes',
+    claimed_at = now(),
+    visible_at = now() + $2::INTERVAL,
     attempts   = attempts + 1,
-    updated_at = NOW()
+    updated_at = now()
 WHERE id = (
     SELECT id FROM public.tasks
-    WHERE status = 'pending'
-      AND visible_at <= NOW()
-    ORDER BY
-        CASE priority
-            WHEN 'high'     THEN 1
-            WHEN 'medium'   THEN 2
-            WHEN 'low'      THEN 3
-            ELSE 4
-        END ASC,
-        created_at ASC
+    WHERE bucket = $1
+      AND status = 'pending'
+      AND visible_at <= now()
+    ORDER BY priority_rank ASC, visible_at ASC
     LIMIT 1
     FOR UPDATE SKIP LOCKED
 )
-RETURNING id, title, description, user_id, priority, attempts, agent_id;
+AND status = 'pending'
+RETURNING id, title, description, user_id, agent_id,
+          priority, attempts, idempotency_key;
 """
-
 # Return stale 'running' tasks whose lease expired back to 'pending'
 # so another worker (or the next poll) can reclaim them.
 _RECLAIM_SQL = """
@@ -140,6 +162,11 @@ RETURNING id;
 
 
 # ── Database helpers ──────────────────────────────────────────────────────────
+NUM_BUCKETS = 16
+LEASE = 2  # default
+import asyncio, random
+import asyncpg
+
 
 def _connect() -> psycopg2.extensions.connection:
     db_url = os.getenv("DATABASE_URL")
@@ -157,14 +184,38 @@ def _claim_task(conn) -> dict | None:
     if not row:
         return None
     return {
-        "id":          str(row[0]),
-        "title":       row[1],
+        "id": str(row[0]),
+        "title": row[1],
         "description": row[2] or "",
-        "user_id":     str(row[3]),
-        "priority":    row[4],
-        "attempts":    row[5],
-        "agent_id":    str(row[6]) if row[6] else None,
+        "user_id": str(row[3]),
+        "priority": row[4],
+        "attempts": row[5],
+        "agent_id": str(row[6]) if row[6] else None,
     }
+
+
+async def claim_oneTask(conn, buckets, retries=5):
+    for i in range(retries):
+        try:
+            with conn.acquire() as cur:
+                result = await cur.fetchall(_CLAIM_SQL, buckets, retries)
+                return result
+        except asyncpg.PostgresError as e:
+            if getattr(e, "sqlstate", None) != "40001":
+                raise
+            await asyncio.sleep((0.05 * 2**i) + random.uniform(0, 0.05))
+    return None
+
+
+async def clain_anyTask(conn, worker_id):
+    start = worker_id % NUM_BUCKETS
+
+    for i in range(NUM_BUCKETS):
+        buckets = (start + i) % NUM_BUCKETS
+        row = await claim_oneTask(conn, buckets=buckets)
+        if row:
+            return
+    return None
 
 
 def _reclaim_dead(conn) -> int:
@@ -256,10 +307,13 @@ def _mark_failed(conn, task_id: str, error: str, attempts: int) -> None:
                 (error, str(backoff), task_id),
             )
             conn.commit()
-        logger.info(f"Task {task_id} requeued — retrying in {backoff}s (attempt {attempts}/{MAX_ATTEMPTS})")
+        logger.info(
+            f"Task {task_id} requeued — retrying in {backoff}s (attempt {attempts}/{MAX_ATTEMPTS})"
+        )
 
 
 # ── Main worker loop ──────────────────────────────────────────────────────────
+
 
 def run() -> None:
     from core.llm_class import LLM
@@ -267,7 +321,9 @@ def run() -> None:
     from core.agent_factory import cleanup_stale_spawned_agents
 
     model = os.getenv("DEFAULT_LLM_MODEL", "gpt-4")
-    logger.info(f"Worker starting — model={model}, poll_interval={POLL_INTERVAL_SECONDS}s")
+    logger.info(
+        f"Worker starting — model={model}, poll_interval={POLL_INTERVAL_SECONDS}s"
+    )
 
     llm = LLM(model=model)
     conn = _connect()
@@ -334,7 +390,9 @@ def run() -> None:
                 # same as a raised exception, or every orchestrator-level failure
                 # would be recorded as "completed".
                 if result.get("status") == "error":
-                    raise RuntimeError(result.get("message", "Orchestrator returned an error"))
+                    raise RuntimeError(
+                        result.get("message", "Orchestrator returned an error")
+                    )
                 _mark_completed(conn, task["id"], result)
                 logger.info(f"Task {task['id']} completed successfully")
 
