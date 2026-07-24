@@ -113,6 +113,23 @@ CREATE INDEX IF NOT EXISTS idx_tasks_agent_id ON public.tasks(agent_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status   ON public.tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_priority ON public.tasks(priority);
 
+# -- ─────────────────────────────────────────────────────────
+# -- memory_items
+# -- ─────────────────────────────────────────────────────────
+# CREATE TABLE IF NOT EXISTS public.memory_items (
+#     id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+#     user_id     UUID NOT NULL,
+#     agent_id    UUID REFERENCES public.agents(id) ON DELETE CASCADE,
+#     key         TEXT NOT NULL,
+#     value       JSONB NOT NULL DEFAULT '{}',
+#     memory_type TEXT NOT NULL DEFAULT 'short_term',
+#     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+#     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+# );
+
+
+# CREATE INDEX IF NOT EXISTS idx_memory_user_id  ON public.memory_items(user_id);
+# CREATE INDEX IF NOT EXISTS idx_memory_agent_id ON public.memory_items(agent_id);
 -- ─────────────────────────────────────────────────────────
 -- memory_items
 -- ─────────────────────────────────────────────────────────
@@ -120,17 +137,19 @@ CREATE TABLE IF NOT EXISTS public.memory_items (
     id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id     UUID NOT NULL,
     agent_id    UUID REFERENCES public.agents(id) ON DELETE CASCADE,
+    embedding   VECTOR(1024)
     key         TEXT NOT NULL,
     value       JSONB NOT NULL DEFAULT '{}',
     memory_type TEXT NOT NULL DEFAULT 'short_term',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    
+    VECTOR INDEX idx_memory_embd (agent_id , embedding)
 );
 
 
 CREATE INDEX IF NOT EXISTS idx_memory_user_id  ON public.memory_items(user_id);
 CREATE INDEX IF NOT EXISTS idx_memory_agent_id ON public.memory_items(agent_id);
-
 -- ─────────────────────────────────────────────────────────
 -- altering_task_table 
 -- ─────────────────────────────────────────────────────────
