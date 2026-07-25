@@ -15,3 +15,5 @@ venture-os/agent-engine/spawned_agents/*
 # Per-task project output written by Orchestrator._write_project_output
 venture-os/agent-engine/generated_projects/*
 !venture-os/agent-engine/generated_projects/.gitkeep
+mcp.json
+.mcp.json
