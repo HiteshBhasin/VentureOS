@@ -69,7 +69,7 @@ WHERE id = (
 )
 AND status = 'pending'
 RETURNING id, title, description, user_id, agent_id,
-          priority, attempts, idempotency_key;
+          priority, attempts, idempotency_key, type, goal_id;
 """
 
 # Return stale 'running' tasks whose lease expired back to 'pending'
@@ -122,6 +122,16 @@ SET status = 'idle', activity = 'IDLE', progress = 0, updated_at = NOW()
 WHERE id = %s;
 """
 
+# Emergency-coordination plan (item 5): each step is its own durable row so
+# a killed worker never loses more than the one step it was mid-execution
+# on. Advancing the chain is just "insert the next row" — see
+# _advance_emergency_plan() below.
+_INSERT_NEXT_EMERGENCY_STEP_SQL = """
+INSERT INTO public.tasks (user_id, goal_id, title, description, type, priority, status)
+VALUES (%s, %s, %s, %s, %s, 'high', 'pending')
+RETURNING id;
+"""
+
 # For tasks created without an explicit agent_id (e.g. the dashboard's
 # objective bar), atomically claim one idle agent belonging to the same user
 # so the Agents page reflects real work instead of sitting permanently idle.
@@ -145,9 +155,15 @@ import random
 
 
 def _connect() -> psycopg2.extensions.connection:
-    db_url = os.getenv("DATABASE_URL")
+    # Prefer the real CockroachDB cluster (COCRAOCH_DB_URL) — DATABASE_URL
+    # currently points at Supabase Postgres, which doesn't have the
+    # bucket/priority_rank/idempotency_key columns this queue depends on.
+    # See scripts/cocroach_migrate_db.py for the schema that matches this.
+    db_url = os.getenv("COCRAOCH_DB_URL") or os.getenv("DATABASE_URL")
     if not db_url:
-        raise EnvironmentError("DATABASE_URL is not set in .env")
+        raise EnvironmentError(
+            "Neither COCRAOCH_DB_URL nor DATABASE_URL is set in .env"
+        )
     return psycopg2.connect(db_url)
 
 
@@ -168,7 +184,8 @@ def _claim_task(conn) -> dict | None:
     if not row:
         return None
     # Column order matches _CLAIM_SQL's RETURNING clause exactly:
-    # id, title, description, user_id, agent_id, priority, attempts, idempotency_key
+    # id, title, description, user_id, agent_id, priority, attempts,
+    # idempotency_key, type, goal_id
     return {
         "id": str(row[0]),
         "title": row[1],
@@ -178,6 +195,8 @@ def _claim_task(conn) -> dict | None:
         "priority": row[5],
         "attempts": row[6],
         "idempotency_key": row[7],
+        "type": row[8],
+        "goal_id": str(row[9]) if row[9] else None,
     }
 
 
@@ -242,6 +261,79 @@ def _mark_completed(conn, task_id: str, result: dict) -> None:
     with conn.cursor() as cur:
         cur.execute(_COMPLETE_SQL, (psycopg2.extras.Json(result), task_id))
         conn.commit()
+
+
+# Emergency-coordination plan (item 5): assess_route → clear_zone → dispatch
+# → re_plan. Each step is a `type` value on public.tasks; _NEXT_EMERGENCY_STEP
+# says what comes after a given step (None = last step, chain stops).
+_NEXT_EMERGENCY_STEP = {
+    "assess_route": "clear_zone",
+    "clear_zone": "dispatch",
+    "dispatch": "re_plan",
+    "re_plan": None,
+}
+
+# What the next step's agent is asked to do. The previous step's result gets
+# prepended to this at insert time, so the agent always has full context —
+# see _advance_emergency_plan().
+_EMERGENCY_STEP_INSTRUCTIONS = {
+    "clear_zone": (
+        "Given the route assessment above, identify which zone(s) must be "
+        "cleared before the route can be used safely, and give clearance "
+        "instructions for the crews responsible."
+    ),
+    "dispatch": (
+        "Given the zone clearance above, dispatch the appropriate emergency "
+        "response units — specify who goes where, in what order, and with "
+        "what priority."
+    ),
+    "re_plan": (
+        "Given the dispatch above and everything assessed so far, review the "
+        "overall plan: confirm it is on track, flag any remaining risks, and "
+        "state what should happen next."
+    ),
+}
+
+# Keep each step's forwarded context to a sane size — the full orchestrator
+# result can be large, and only a summary is needed for the next prompt.
+_MAX_FORWARDED_RESULT_CHARS = 4000
+
+
+def _advance_emergency_plan(conn, task: dict, result: dict) -> None:
+    """If `task` was one step of the emergency-coordination plan, insert the
+    next step now that this one has completed. No-op for ordinary tasks
+    (unknown type, or the terminal 're_plan' step)."""
+    step = task.get("type")
+    goal_id = task.get("goal_id")
+    if step not in _NEXT_EMERGENCY_STEP or not goal_id:
+        return
+    next_step = _NEXT_EMERGENCY_STEP[step]
+    if not next_step:
+        logger.info(f"Emergency plan {goal_id} finished at step '{step}'")
+        return
+
+    summary = json.dumps(result.get("report", result), default=str)
+    if len(summary) > _MAX_FORWARDED_RESULT_CHARS:
+        summary = summary[:_MAX_FORWARDED_RESULT_CHARS] + "...(truncated)"
+
+    description = (
+        f"[{step} result]\n{summary}\n\n"
+        f"[Your task — {next_step}]\n{_EMERGENCY_STEP_INSTRUCTIONS[next_step]}"
+    )
+    with conn.cursor() as cur:
+        cur.execute(
+            _INSERT_NEXT_EMERGENCY_STEP_SQL,
+            (
+                task["user_id"],
+                goal_id,
+                next_step.replace("_", " ").title(),
+                description,
+                next_step,
+            ),
+        )
+        new_id = cur.fetchone()[0]
+        conn.commit()
+    logger.info(f"Emergency plan {goal_id}: '{step}' done → queued '{next_step}' ({new_id})")
 
 
 def _mark_failed(conn, task_id: str, error: str, attempts: int) -> None:
@@ -358,6 +450,7 @@ def run() -> None:
                     )
                 _mark_completed(conn, task["id"], result)
                 logger.info(f"Task {task['id']} completed successfully")
+                _advance_emergency_plan(conn, task, result)
 
             except Exception as exc:
                 logger.error(f"Task {task['id']} failed: {exc}", exc_info=True)
