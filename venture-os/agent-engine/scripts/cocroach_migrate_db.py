@@ -142,7 +142,7 @@ CREATE TABLE IF NOT EXISTS public.memory_items (
     value       JSONB NOT NULL DEFAULT '{}',
     memory_type TEXT NOT NULL DEFAULT 'short_term',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     
     VECTOR INDEX idx_memory_embd (agent_id , embedding)
 );
