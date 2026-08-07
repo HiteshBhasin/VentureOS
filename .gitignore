@@ -17,3 +17,7 @@ venture-os/agent-engine/generated_projects/*
 !venture-os/agent-engine/generated_projects/.gitkeep
 mcp.json
 .mcp.json
+
+# Cached OAuth tokens for the CockroachDB Cloud MCP client (tools/bedrock_mcp_tool.py,
+# tools/cockroach_mcp_client.py) — secrets, not source.
+venture-os/agent-engine/.mcp_oauth_cache/

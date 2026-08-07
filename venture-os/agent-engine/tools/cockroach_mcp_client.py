@@ -21,11 +21,14 @@ def _resolve_config_path(config_path: Optional[str] = None) -> Path:
             return path
         raise RuntimeError(f"Configured MCP config path not found: {path}")
 
-    repo_root = Path(__file__).resolve().parents[1]
+    here = Path(__file__).resolve()
+    agent_engine_root = here.parents[1]  # venture-os/agent-engine/
+    monorepo_root = here.parents[3]  # repo root — where .mcp.json actually lives
     candidates = [
-        repo_root / ".mcp.json",
-        repo_root / "tools" / "mcp.json",
-        repo_root / "mcp.json",
+        monorepo_root / ".mcp.json",
+        agent_engine_root / ".mcp.json",
+        agent_engine_root / "tools" / "mcp.json",
+        agent_engine_root / "mcp.json",
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -58,9 +61,14 @@ def _load_server_config(
 
 
 def _build_client(server_cfg: Dict[str, Any]) -> Any:
-    """Create a fastmcp client in a version-compatible way."""
+    """Create a fastmcp client for the CockroachDB Cloud MCP server."""
     try:
         from fastmcp import Client  # type: ignore[import-not-found]
+        from fastmcp.client.auth.oauth import OAuth  # type: ignore[import-not-found]
+        from fastmcp.client.transports import (  # type: ignore[import-not-found]
+            StreamableHttpTransport,
+        )
+        from key_value.aio.stores.filetree import FileTreeStore  # type: ignore[import-not-found]
     except ImportError as exc:
         raise ImportError(
             "fastmcp is required for Cockroach MCP access. Install it in your "
@@ -68,20 +76,20 @@ def _build_client(server_cfg: Dict[str, Any]) -> Any:
         ) from exc
 
     url = server_cfg["url"]
-    headers = server_cfg.get("headers", {})
+    headers = dict(server_cfg.get("headers", {}))
 
-    sig = inspect.signature(Client)
-    kwargs: Dict[str, Any] = {}
-    if "transport" in sig.parameters:
-        kwargs["transport"] = url
-    elif "url" in sig.parameters:
-        kwargs["url"] = url
-    else:
-        return Client(url)
-
-    if "headers" in sig.parameters:
-        kwargs["headers"] = headers
-    return Client(**kwargs)
+    # CockroachDB Cloud's MCP server doesn't hand out a static API token —
+    # the only credential the console gives you is .mcp.json (endpoint +
+    # cluster-id header). Auth is OAuth: the first call opens a browser for
+    # login, and the resulting token is cached to disk so later calls don't
+    # need a browser again.
+    token_cache_dir = Path(__file__).resolve().parents[1] / ".mcp_oauth_cache"
+    auth = OAuth(
+        mcp_url=url,
+        token_storage=FileTreeStore(data_directory=token_cache_dir),
+    )
+    transport = StreamableHttpTransport(url=url, headers=headers, auth=auth)
+    return Client(transport)
 
 
 @asynccontextmanager

@@ -1280,7 +1280,76 @@ class Orchestrator:
             ),
             handler=_web_search_handler,
         )
-        logger.info("Registered default tools: web_search")
+
+        # CockroachDB Cloud MCP Server — the agent's read path into the
+        # cluster (item 4: required alongside the C-SPANN vector index).
+        # BedrockMCPTool bridges the async fastmcp client onto a sync call
+        # so it fits this otherwise-synchronous tool-registration pattern.
+        from tools.bedrock_mcp_tool import BedrockMCPTool
+
+        mcp_bridge = BedrockMCPTool()
+
+        def _cluster_list_tools_handler() -> Dict[str, Any]:
+            return mcp_bridge.list_tools(server_name="cockroachdb-cloud")
+
+        self.tool_registry.register(
+            ToolDefinition(
+                name="cockroach_cluster_list_tools",
+                description=(
+                    "List the tools exposed by the CockroachDB Cloud MCP "
+                    "server for this cluster — use before "
+                    "cockroach_cluster_read to see what's callable."
+                ),
+                category=ToolCategory.DATA,
+                parameters=[],
+            ),
+            handler=_cluster_list_tools_handler,
+        )
+
+        def _cluster_read_handler(
+            tool_name: str, arguments: Optional[Dict[str, Any]] = None
+        ) -> Dict[str, Any]:
+            return mcp_bridge.call_tool(
+                tool_name, arguments or {}, server_name="cockroachdb-cloud"
+            )
+
+        self.tool_registry.register(
+            ToolDefinition(
+                name="cockroach_cluster_read",
+                description=(
+                    "Read cluster data (run a query, inspect schema, check "
+                    "cluster/node status) through the CockroachDB Cloud MCP "
+                    "server — this is the agent's read path into the "
+                    "cluster, not a direct DB connection. For similarity "
+                    "search over situational memory, call it with the "
+                    "server's SQL-execution tool and a query against "
+                    "memory_items ordered by `embedding <=> $1` (the "
+                    "C-SPANN vector index)."
+                ),
+                category=ToolCategory.DATA,
+                parameters=[
+                    ToolParameter(
+                        name="tool_name",
+                        type="string",
+                        description="Name of the MCP tool to invoke (see cockroach_cluster_list_tools)",
+                        required=True,
+                    ),
+                    ToolParameter(
+                        name="arguments",
+                        type="object",
+                        description="JSON arguments for the MCP tool",
+                        required=False,
+                        default={},
+                    ),
+                ],
+            ),
+            handler=_cluster_read_handler,
+        )
+
+        logger.info(
+            "Registered default tools: web_search, cockroach_cluster_list_tools, "
+            "cockroach_cluster_read"
+        )
 
     def execute_tool(self, tool_name: str, args: Dict[str, Any]) -> Any:
         """Execute tool via tool executor with safety checks."""

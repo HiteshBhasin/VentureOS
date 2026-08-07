@@ -7,7 +7,7 @@ python-dotenv
 httpx
 psycopg2-binary
 supabase
-
+fastmcp
 # LLM providers — selected at runtime by model name prefix (core/llm_class.py).
 # mistralai is the provider currently verified working end-to-end; openai/cohere
 # are supported but depend on the relevant API account having usable quota.
@@ -17,6 +17,14 @@ cohere
 # exists in the 1.x API shape — mistralai 2.x renamed/restructured this and
 # breaks the import (confirmed by an unpinned Docker build pulling 2.5.0).
 mistralai==1.12.4
+
+# AWS Bedrock — LLM generation (core/llm_class.py, "bedrock/" model prefix)
+# and Titan embeddings (scripts/cocroach_tools.py).
+boto3
+
+# CockroachDB Cloud MCP Server client (tools/bedrock_mcp_tool.py,
+# tools/cockroach_mcp_client.py) — the agent's read path into the cluster.
+fastmcp
 
 # Optional subsystems that degrade gracefully if absent (kept anyway — small,
 # and used by the real cache/vector-memory code paths when configured).

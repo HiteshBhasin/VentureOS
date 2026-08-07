@@ -43,6 +43,8 @@ dependencies = [
     # LLM providers selected at runtime by model name prefix (core/llm_class.py).
     "cohere",
     "mistralai",
+    "boto3",
+    "fastmcp",
 ]
 
 [build-system]

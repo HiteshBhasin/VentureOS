@@ -45,45 +45,22 @@ DEADLETTER_SWEEP_INTERVAL_SECONDS = 300  # how often to check for tasks past the
 
 # ── SQL statements ────────────────────────────────────────────────────────────
 
-# Atomically grab the highest-priority pending task whose lease has not started
-# (or whose lease has expired — covers dead-worker recovery).
+# Atomically grab the highest-priority pending task from one bucket whose
+# lease has not started (or has expired — covers dead-worker recovery).
 # FOR UPDATE SKIP LOCKED ensures two workers never claim the same row.
-# _CLAIM_SQL = f"""
-# UPDATE public.tasks
-# SET
-#     status     = 'running',
-#     claimed_at = NOW(),
-#     visible_at = NOW() + INTERVAL '{LEASE_MINUTES} minutes',
-#     attempts   = attempts + 1,
-#     updated_at = NOW()
-# WHERE id = (
-#     SELECT id FROM public.tasks
-#     WHERE status = 'pending'
-#       AND visible_at <= NOW()
-#     ORDER BY
-#         CASE priority
-#             WHEN 'high'     THEN 1
-#             WHEN 'medium'   THEN 2
-#             WHEN 'low'      THEN 3
-#             ELSE 4
-#         END ASC,
-#         created_at ASC
-#     LIMIT 1
-#     FOR UPDATE SKIP LOCKED
-# )
-# RETURNING id, title, description, user_id, priority, attempts, agent_id;
-# """
+# Buckets spread contention across the hash-partitioned queue (16 buckets);
+# see _claim_task() for the round-robin scan across them.
 _CLAIM_SQL = """
 UPDATE public.tasks
 SET
     status     = 'running',
     claimed_at = now(),
-    visible_at = now() + $2::INTERVAL,
+    visible_at = now() + (%s || ' minutes')::INTERVAL,
     attempts   = attempts + 1,
     updated_at = now()
 WHERE id = (
     SELECT id FROM public.tasks
-    WHERE bucket = $1
+    WHERE bucket = %s
       AND status = 'pending'
       AND visible_at <= now()
     ORDER BY priority_rank ASC, visible_at ASC
@@ -94,39 +71,6 @@ AND status = 'pending'
 RETURNING id, title, description, user_id, agent_id,
           priority, attempts, idempotency_key;
 """
-
-# The REAPER
-
-
-_THE_REAPER = """
-
-UPDATE public.tasks
-SET 
-    status     = 'pending',
-    claimed_at = NULL,
-    visible_at = now(),
-    attempts   = attempts + 1,
-    updated_at = now()
-WHERE id IN (
-    SELECT id 
-    FROM public.tasks
-    WHERE status='running' 
-    AND visible_at <= now()
-    LIMIT 100
-    FOR UPDATE SKIP LOCKED
-)
-"""
-_RETIRED_TASKS = """
-UPDATE public.tasks
-SET
-    status = "failed",
-    error  = "exceeded max attempts",
-    updated_at = now()
-WHERE status = "running"
-    AND visible_at <=nows()
-    AND attempts>=$1
-"""
-
 
 # Return stale 'running' tasks whose lease expired back to 'pending'
 # so another worker (or the next poll) can reclaim them.
@@ -197,9 +141,7 @@ RETURNING id;
 
 # ── Database helpers ──────────────────────────────────────────────────────────
 NUM_BUCKETS = 16
-LEASE = 2  # default
-import asyncio, random
-import asyncpg
+import random
 
 
 def _connect() -> psycopg2.extensions.connection:
@@ -210,56 +152,33 @@ def _connect() -> psycopg2.extensions.connection:
 
 
 def _claim_task(conn) -> dict | None:
-    """Atomically claim one pending task. Returns the row dict or None."""
+    """Atomically claim one pending task, scanning the 16 buckets in a random
+    starting order so contention spreads across the hash-partitioned queue.
+    Returns the row dict, or None if every bucket is empty."""
+    start = random.randrange(NUM_BUCKETS)
+    row = None
     with conn.cursor() as cur:
-        cur.execute(_CLAIM_SQL)
-        row = cur.fetchone()
-        conn.commit()
+        for i in range(NUM_BUCKETS):
+            bucket = (start + i) % NUM_BUCKETS
+            cur.execute(_CLAIM_SQL, (LEASE_MINUTES, bucket))
+            row = cur.fetchone()
+            conn.commit()
+            if row:
+                break
     if not row:
         return None
+    # Column order matches _CLAIM_SQL's RETURNING clause exactly:
+    # id, title, description, user_id, agent_id, priority, attempts, idempotency_key
     return {
         "id": str(row[0]),
         "title": row[1],
         "description": row[2] or "",
         "user_id": str(row[3]),
-        "priority": row[4],
-        "attempts": row[5],
-        "agent_id": str(row[6]) if row[6] else None,
+        "agent_id": str(row[4]) if row[4] else None,
+        "priority": row[5],
+        "attempts": row[6],
+        "idempotency_key": row[7],
     }
-
-
-async def claim_oneTask(conn, buckets, retries=5):
-    for i in range(retries):
-        try:
-            with conn.acquire() as cur:
-                result = await cur.fetchall(_CLAIM_SQL, buckets, retries)
-                return result
-        except asyncpg.PostgresError as e:
-            if getattr(e, "sqlstate", None) != "40001":
-                raise
-            await asyncio.sleep((0.05 * 2**i) + random.uniform(0, 0.05))
-    return None
-
-
-async def clain_anyTask(conn, worker_id):
-    start = worker_id % NUM_BUCKETS
-
-    for i in range(NUM_BUCKETS):
-        buckets = (start + i) % NUM_BUCKETS
-        row = await claim_oneTask(conn, buckets=buckets)
-        if row:
-            return
-    return None
-
-
-async def reaper(conn, interval=30, max_attemps=5):
-    try:
-        with conn.acquire() as cur:
-            await cur.execute(_THE_REAPER, max_attemps)
-            await cur.execute(_RETIRED_TASKS, max_attemps)
-    except:
-        raise
-    await asyncio.sleep(interval)
 
 
 def _reclaim_dead(conn) -> int:

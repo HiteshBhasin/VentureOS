@@ -64,6 +64,17 @@ class LLM:
             )
             self.provider = "mistral"
 
+        elif model.startswith("bedrock/"):
+            import boto3  # type: ignore[import-not-found]
+
+            self.client = boto3.client(
+                "bedrock-runtime", region_name=os.getenv("AWS_REGION", "us-east-1")
+            )
+            # Strip the "bedrock/" prefix to get the actual Bedrock modelId,
+            # e.g. "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0".
+            self.model = model[len("bedrock/") :]
+            self.provider = "bedrock"
+
         elif model.startswith("command"):
             try:
                 import cohere  # type: ignore[import-untyped]
@@ -84,7 +95,7 @@ class LLM:
         else:
             raise ValueError(
                 f"Unsupported model: '{model}'. "
-                "Supported prefixes: gpt-, o1, o3, gemini-, mistral-, command"
+                "Supported prefixes: gpt-, o1, o3, gemini-, mistral-, command, bedrock/"
             )
 
     def _invoke_once(self, prompt: str, system_prmpt: str) -> str:
@@ -126,6 +137,15 @@ class LLM:
             content = response.message.content  # type: ignore[union-attr]
             return content[0].text if content else ""  # type: ignore[union-attr]
 
+        elif self.provider == "bedrock":
+            response = self.client.converse(  # type: ignore[union-attr]
+                modelId=self.model,
+                messages=[{"role": "user", "content": [{"text": prompt}]}],
+                system=[{"text": system_prmpt}] if system_prmpt else [],
+                inferenceConfig={"temperature": self.temperature},
+            )
+            return response["output"]["message"]["content"][0]["text"]
+
         raise ValueError(f"Unknown provider: '{self.provider}'")
 
     @staticmethod
@@ -139,6 +159,7 @@ class LLM:
             or "too many requests" in msg
             or "resource_exhausted" in msg  # Gemini
             or "quota" in msg
+            or "throttling" in msg  # Bedrock ThrottlingException
         )
 
     def invoke(self, prompt: str, system_prmpt: str = "") -> str:

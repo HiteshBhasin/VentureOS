@@ -73,6 +73,11 @@ class BedrockMCPTool:
 	def _make_client(self, server_cfg: Dict[str, Any]) -> Any:
 		try:
 			from fastmcp import Client  # type: ignore[import-not-found]
+			from fastmcp.client.auth.oauth import OAuth  # type: ignore[import-not-found]
+			from fastmcp.client.transports import (  # type: ignore[import-not-found]
+				StreamableHttpTransport,
+			)
+			from key_value.aio.stores.filetree import FileTreeStore  # type: ignore[import-not-found]
 		except ImportError as exc:
 			raise ImportError(
 				"fastmcp is required for MCP access. Install it in your "
@@ -80,25 +85,23 @@ class BedrockMCPTool:
 			) from exc
 
 		url = server_cfg.get("url")
-		headers = server_cfg.get("headers", {})
+		headers = dict(server_cfg.get("headers", {}))
 		if not url:
 			raise RuntimeError("MCP server configuration is missing 'url'")
 
-		# Keep compatibility across fastmcp versions by only passing
-		# constructor arguments that are actually supported.
-		sig = inspect.signature(Client)
-		kwargs: Dict[str, Any] = {}
-		if "transport" in sig.parameters:
-			kwargs["transport"] = url
-		elif "url" in sig.parameters:
-			kwargs["url"] = url
-		else:
-			# Last-resort fallback for constructors that accept a positional URL.
-			return Client(url)
-
-		if "headers" in sig.parameters:
-			kwargs["headers"] = headers
-		return Client(**kwargs)
+		# CockroachDB Cloud's MCP server doesn't hand out a static API
+		# token — the only credential the console gives you is .mcp.json
+		# (endpoint + cluster-id header). Auth is OAuth: the first call
+		# opens a browser for login, and the resulting token is cached to
+		# disk so later calls (including from a headless worker process)
+		# don't need a browser again.
+		token_cache_dir = Path(__file__).resolve().parents[1] / ".mcp_oauth_cache"
+		auth = OAuth(
+			mcp_url=url,
+			token_storage=FileTreeStore(data_directory=token_cache_dir),
+		)
+		transport = StreamableHttpTransport(url=url, headers=headers, auth=auth)
+		return Client(transport)
 
 	def _load_server_config(self, server_name: str) -> Dict[str, Any]:
 		cfg_path = self._resolve_config_path()
@@ -123,11 +126,14 @@ class BedrockMCPTool:
 				return path
 			raise RuntimeError(f"Configured MCP config path not found: {path}")
 
-		repo_root = Path(__file__).resolve().parents[1]
+		here = Path(__file__).resolve()
+		agent_engine_root = here.parents[1]  # venture-os/agent-engine/
+		monorepo_root = here.parents[3]  # repo root — where .mcp.json actually lives
 		candidates = [
-			repo_root / ".mcp.json",
-			repo_root / "tools" / "mcp.json",
-			repo_root / "mcp.json",
+			monorepo_root / ".mcp.json",
+			agent_engine_root / ".mcp.json",
+			agent_engine_root / "tools" / "mcp.json",
+			agent_engine_root / "mcp.json",
 		]
 		for candidate in candidates:
 			if candidate.exists():

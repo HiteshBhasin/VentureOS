@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS public.memory_items (
     id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id     UUID NOT NULL,
     agent_id    UUID REFERENCES public.agents(id) ON DELETE CASCADE,
-    embedding   VECTOR(1024)
+    embedding   VECTOR(1024),
     key         TEXT NOT NULL,
     value       JSONB NOT NULL DEFAULT '{}',
     memory_type TEXT NOT NULL DEFAULT 'short_term',
