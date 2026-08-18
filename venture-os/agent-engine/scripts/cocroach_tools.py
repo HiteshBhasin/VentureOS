@@ -1,5 +1,11 @@
 """
-CockroachDB tools — Bedrock embeddings + memory_items read/write helpers.
+CockroachDB tools — embeddings + memory_items read/write helpers.
+
+Embeddings use Mistral (mistral-embed) rather than Bedrock Titan — this
+account's Bedrock model access request wasn't approved, and mistral-embed
+supports the same 1024-dim output via `output_dimension` with no access
+request needed. Switch providers here only; the DB schema/queries are
+unaffected either way.
 
 Requires public.memory_items (see scripts/cocroach_migrate_db.py) with an
 `embedding VECTOR(1024)` column.
@@ -11,12 +17,12 @@ Run from agent-engine/:
 import psycopg2
 import os
 import sys
-import boto3
 import json
 from pathlib import Path
 from typing import Optional
 import logging
 from dotenv import load_dotenv
+from mistralai import Mistral
 
 ROOT = Path(__file__).resolve().parents[1]  # agent-engine/ (where .env lives)
 
@@ -26,25 +32,23 @@ load_dotenv(dotenv_path=ROOT / ".env")
 
 logger = logging.getLogger(__name__)
 
-bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
+_mistral_client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
 
-EMBEDDING_MODEL_ID = "amazon.titan-embed-text-v2:0"
+EMBEDDING_MODEL_ID = "mistral-embed"
 EMBEDDING_DIM = 1024
 
 
-def bedrock_embedding(text: str) -> list:
-    """Embed `text` with Amazon Titan Embed Text v2. Returns a 1024-dim list of floats."""
-    body = json.dumps(
-        {"inputText": text, "dimensions": EMBEDDING_DIM, "normalize": True}
+def embed_text(text: str) -> list:
+    """Embed `text` with Mistral. Returns a 1024-dim list of floats."""
+    response = _mistral_client.embeddings.create(
+        model=EMBEDDING_MODEL_ID,
+        inputs=[text],
+        output_dimension=EMBEDDING_DIM,
     )
-    response = bedrock_runtime.invoke_model(
-        body=body,
-        modelId=EMBEDDING_MODEL_ID,
-        accept="application/json",
-        contentType="application/json",
-    )
-    response_body = json.loads(response["body"].read())
-    return response_body.get("embedding", [])
+    embedding = response.data[0].embedding
+    if not embedding:
+        raise RuntimeError("Mistral embeddings call returned no vector")
+    return embedding
 
 
 def _vector_literal(embedding: list) -> str:
@@ -71,7 +75,7 @@ def store_memory(
     memory_type: str = "semantic",
 ) -> str:
     """Embed `text` and insert it into memory_items. Returns the new row's id."""
-    embedding = bedrock_embedding(text)
+    embedding = embed_text(text)
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -103,7 +107,7 @@ def search_memory(
     query_text: str, agent_id: Optional[str] = None, top_k: int = 10
 ) -> list:
     """Semantic search over memory_items, nearest to `query_text` by cosine distance."""
-    embedding = _vector_literal(bedrock_embedding(query_text))
+    embedding = _vector_literal(embed_text(query_text))
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -127,8 +131,8 @@ def search_memory(
 
 
 if __name__ == "__main__":
-    vec = bedrock_embedding("connection smoke test")
-    print(f"Bedrock OK — embedding dimension: {len(vec)}")
+    vec = embed_text("connection smoke test")
+    print(f"Mistral embeddings OK — dimension: {len(vec)}")
 
     conn = get_connection()
     print("CockroachDB connection OK")

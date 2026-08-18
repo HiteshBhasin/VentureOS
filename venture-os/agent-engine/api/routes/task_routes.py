@@ -1,14 +1,31 @@
-# Task endpoints — all queries filtered by authenticated user_id
+# Task endpoints — all queries filtered by authenticated user_id.
+#
+# Reads/writes CockroachDB directly (COCRAOCH_DB_URL), not the Supabase
+# tables the rest of the API still uses — this is where the emergency-plan
+# task chain (worker.py, scripts/seed_wildfire_incident.py) actually lives,
+# so the dashboard needs to look at the same database the worker does.
+# Auth stays on Supabase (api/middleware/auth.py) — that's identity
+# verification, unrelated to where task rows live.
 import os
 from pathlib import Path as FSPath
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 from pydantic import BaseModel
+import psycopg2
+import psycopg2.extras
 
 from api.middleware.auth import get_current_user
-from memory.supabase_client import engine
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+
+def _connect() -> psycopg2.extensions.connection:
+    db_url = os.getenv("COCRAOCH_DB_URL")
+    if not db_url:
+        raise EnvironmentError("COCRAOCH_DB_URL is not set (check agent-engine/.env)")
+    conn = psycopg2.connect(db_url)
+    conn.autocommit = True
+    return conn
 
 # api/routes/task_routes.py -> routes -> api -> agent-engine -> generated_projects/
 _GENERATED_ROOT = (FSPath(__file__).resolve().parents[2] / "generated_projects").resolve()
@@ -65,15 +82,35 @@ async def list_tasks(
         raise HTTPException(
             status_code=400, detail=f"Invalid status. Must be one of: {VALID_STATUSES}"
         )
-    query = engine.table("tasks").select("*").eq("user_id", user_id)
+    conditions = ["user_id = %s"]
+    params: List[Any] = [user_id]
     if status:
-        query = query.eq("status", status)
+        conditions.append("status = %s")
+        params.append(status)
     if priority:
-        query = query.eq("priority", priority)
+        conditions.append("priority = %s")
+        params.append(priority)
     if agent_id:
-        query = query.eq("agent_id", agent_id)
-    res = query.order("created_at", desc=True).range(skip, skip + limit - 1).execute()
-    return {"tasks": res.data, "total": len(res.data)}
+        conditions.append("agent_id = %s")
+        params.append(agent_id)
+    where_clause = " AND ".join(conditions)
+
+    conn = _connect()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                f"""
+                SELECT * FROM public.tasks
+                WHERE {where_clause}
+                ORDER BY created_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                params + [limit, skip],
+            )
+            tasks = [dict(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+    return {"tasks": tasks, "total": len(tasks)}
 
 
 @router.get("/{task_id}")
@@ -82,17 +119,24 @@ async def get_task(
     user_id: str = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Get a single task by ID."""
-    res = (
-        engine.table("tasks")
-        .select("*")
-        .eq("id", task_id)
-        .eq("user_id", user_id)
-        .single()
-        .execute()
-    )
-    if not res.data:
+    task = _fetch_task_or_404(task_id, user_id)
+    return {"task": task}
+
+
+def _fetch_task_or_404(task_id: str, user_id: str) -> Dict[str, Any]:
+    conn = _connect()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT * FROM public.tasks WHERE id = %s AND user_id = %s",
+                (task_id, user_id),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    if not row:
         raise HTTPException(status_code=404, detail="Task not found.")
-    return {"task": res.data}
+    return dict(row)
 
 
 @router.post("/", status_code=201)
@@ -106,23 +150,35 @@ async def create_task(
             status_code=400,
             detail=f"Invalid priority. Must be one of: {VALID_PRIORITIES}",
         )
-    data = {
-        "user_id": user_id,
-        "title": body.title,
-        "description": body.description,
-        "priority": body.priority,
-        "type": body.type,
-        "status": "pending",
-        "progress": 0,
-        "tags": body.tags,
-        "agent_id": body.agent_id,
-        "goal_id": body.goal_id,
-    }
-    res = engine.table("tasks").insert(data).execute()
-    if not res.data:
+    conn = _connect()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO public.tasks
+                    (user_id, title, description, priority, type, status,
+                     progress, tags, agent_id, goal_id)
+                VALUES (%s, %s, %s, %s, %s, 'pending', 0, %s, %s, %s)
+                RETURNING *
+                """,
+                (
+                    user_id,
+                    body.title,
+                    body.description,
+                    body.priority,
+                    body.type,
+                    psycopg2.extras.Json(body.tags),
+                    body.agent_id,
+                    body.goal_id,
+                ),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    if not row:
         raise HTTPException(status_code=500, detail="Failed to create task.")
 
-    return res.data[0]
+    return dict(row)
 
 
 @router.patch("/{task_id}")
@@ -139,16 +195,31 @@ async def update_task(
         raise HTTPException(
             status_code=400, detail=f"Invalid status. Must be one of: {VALID_STATUSES}"
         )
-    res = (
-        engine.table("tasks")
-        .update(updates)
-        .eq("id", task_id)
-        .eq("user_id", user_id)
-        .execute()
-    )
-    if not res.data:
+    set_clauses = []
+    params: List[Any] = []
+    for key, value in updates.items():
+        set_clauses.append(f"{key} = %s")
+        params.append(psycopg2.extras.Json(value) if key == "tags" else value)
+    set_clauses.append("updated_at = now()")
+    params += [task_id, user_id]
+
+    conn = _connect()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                f"""
+                UPDATE public.tasks SET {', '.join(set_clauses)}
+                WHERE id = %s AND user_id = %s
+                RETURNING *
+                """,
+                params,
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    if not row:
         raise HTTPException(status_code=404, detail="Task not found.")
-    return {"task": res.data[0]}
+    return {"task": dict(row)}
 
 
 @router.delete("/{task_id}")
@@ -157,14 +228,17 @@ async def delete_task(
     user_id: str = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Delete a task."""
-    res = (
-        engine.table("tasks")
-        .delete()
-        .eq("id", task_id)
-        .eq("user_id", user_id)
-        .execute()
-    )
-    if not res.data:
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM public.tasks WHERE id = %s AND user_id = %s RETURNING id",
+                (task_id, user_id),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    if not row:
         raise HTTPException(status_code=404, detail="Task not found.")
     return {"deleted": task_id}
 
@@ -183,36 +257,29 @@ async def update_task_status(
         raise HTTPException(
             status_code=400, detail=f"Invalid status. Must be one of: {VALID_STATUSES}"
         )
-    res = (
-        engine.table("tasks")
-        .update({"status": status})
-        .eq("id", task_id)
-        .eq("user_id", user_id)
-        .execute()
-    )
-    if not res.data:
+    conn = _connect()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                UPDATE public.tasks SET status = %s, updated_at = now()
+                WHERE id = %s AND user_id = %s
+                RETURNING *
+                """,
+                (status, task_id, user_id),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    if not row:
         raise HTTPException(status_code=404, detail="Task not found.")
-    return {"task": res.data[0]}
+    return {"task": dict(row)}
 
 
 # ==================== Generated Project Files ====================
 # Lets the dashboard show a completed task's output in-page — file list +
 # readable content — instead of a filesystem path the user has to go find
 # themselves in an OS file browser.
-
-
-async def _get_task_or_404(task_id: str, user_id: str) -> Dict[str, Any]:
-    res = (
-        engine.table("tasks")
-        .select("*")
-        .eq("id", task_id)
-        .eq("user_id", user_id)
-        .single()
-        .execute()
-    )
-    if not res.data:
-        raise HTTPException(status_code=404, detail="Task not found.")
-    return res.data
 
 
 def _resolve_project_dir(task: Dict[str, Any]) -> FSPath:
@@ -242,7 +309,7 @@ async def list_task_files(
     user_id: str = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """List every file in a completed task's generated project folder."""
-    task = await _get_task_or_404(task_id, user_id)
+    task = _fetch_task_or_404(task_id, user_id)
     project_dir = _resolve_project_dir(task)
     files = [
         {
@@ -262,7 +329,7 @@ async def get_task_file(
     user_id: str = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Return the text content of one file from a task's generated project."""
-    task = await _get_task_or_404(task_id, user_id)
+    task = _fetch_task_or_404(task_id, user_id)
     project_dir = _resolve_project_dir(task)
     target = (project_dir / file_path).resolve()
     if target != project_dir and project_dir not in target.parents:

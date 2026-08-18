@@ -349,6 +349,18 @@ class Orchestrator:
                 for task in entry["tasks"]:
                     try:
                         result = agent.execute_task(task)
+                        if not isinstance(result, dict):
+                            # execute_task is documented to return
+                            # Dict[str, Any], but dynamically-generated
+                            # agents sometimes hand back _invoke_llm's raw
+                            # string/None directly instead of wrapping it.
+                            # Normalize here so every downstream consumer
+                            # (this log line, the final report, S3 archiving)
+                            # can rely on the documented contract.
+                            result = {
+                                "status": "success" if result else "error",
+                                "content": result,
+                            }
                         task_results.append({"task": task, "result": result})
                         logger.info(
                             f"  [{agent_name}] '{task.get('type')}' → {result.get('status')}"

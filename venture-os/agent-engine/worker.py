@@ -7,6 +7,14 @@ Run independently alongside the FastAPI server:
 Environment variables required (same .env as the API):
     DATABASE_URL   — direct Postgres connection for atomic claim queries
     DEFAULT_LLM_MODEL — model to use (default: gpt-4)
+
+Environment variables optional:
+    AWS_S3_BUCKET  — if set, every completed task's result is archived to
+                     S3 as a durable audit artifact (see _archive_result_to_s3).
+                     CockroachDB stays the source of truth either way; this
+                     is a copy, not a dependency — a task still completes
+                     normally if the S3 write fails or isn't configured.
+    AWS_REGION     — region for the S3 client (default: us-east-1)
 """
 
 import json
@@ -263,6 +271,37 @@ def _mark_completed(conn, task_id: str, result: dict) -> None:
         conn.commit()
 
 
+_S3_BUCKET = os.getenv("AWS_S3_BUCKET")
+_s3_client = None
+
+
+def _archive_result_to_s3(task_id: str, goal_id: str | None, result: dict) -> None:
+    """Best-effort — write the completed task's result to S3 as a durable
+    audit artifact. CockroachDB is still the source of truth for task state;
+    this is a copy for external inspection, so a failure here (or S3 not
+    being configured at all) must never fail the task itself."""
+    global _s3_client
+    if not _S3_BUCKET:
+        return
+    if _s3_client is None:
+        import boto3
+
+        _s3_client = boto3.client(
+            "s3", region_name=os.getenv("AWS_REGION", "us-east-1")
+        )
+    key = f"tasks/{goal_id or 'standalone'}/{task_id}.json"
+    try:
+        _s3_client.put_object(
+            Bucket=_S3_BUCKET,
+            Key=key,
+            Body=json.dumps(result, default=str).encode("utf-8"),
+            ContentType="application/json",
+        )
+        logger.info(f"Archived task {task_id} result to s3://{_S3_BUCKET}/{key}")
+    except Exception as exc:
+        logger.error(f"Could not archive task {task_id} result to S3: {exc}")
+
+
 # Emergency-coordination plan (item 5): assess_route → clear_zone → dispatch
 # → re_plan. Each step is a `type` value on public.tasks; _NEXT_EMERGENCY_STEP
 # says what comes after a given step (None = last step, chain stops).
@@ -451,6 +490,7 @@ def run() -> None:
                 _mark_completed(conn, task["id"], result)
                 logger.info(f"Task {task['id']} completed successfully")
                 _advance_emergency_plan(conn, task, result)
+                _archive_result_to_s3(task["id"], task.get("goal_id"), result)
 
             except Exception as exc:
                 logger.error(f"Task {task['id']} failed: {exc}", exc_info=True)
